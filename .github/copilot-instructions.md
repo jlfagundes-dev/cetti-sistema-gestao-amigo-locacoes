@@ -8,8 +8,9 @@ Aplicação web mobile-first para gestão da Amigo Locações de equipamentos pa
 
 - Use Next.js com React, TypeScript e Tailwind CSS.
 - Separe componentes de interface, regras de negócio, serviços, integrações e acesso a dados.
-- Até todas as fases do MVP serem concluídas, use persistência local temporária no navegador. Não iniciar a integração com Supabase antes dessa etapa.
-- Quando chegar a hora, mantenha integrações com Supabase, Autentique e WhatsApp atrás de serviços próprios.
+- Durante a implementação funcional, use persistência local temporária no navegador; a migração para Supabase deve ser gradual e validada por módulo.
+- Mantenha integrações com Supabase, Autentique e WhatsApp atrás de serviços próprios.
+- Preserve o fallback local até cada módulo estar autenticado e validado.
 - Nunca exponha chaves privadas no navegador.
 - Toda operação do modo local deve persistir no armazenamento do navegador; não trate dados fictícios como dados reais.
 

@@ -19,6 +19,14 @@ A aplicação contém as bases das **Fases 1, 2 e 3 do MVP**:
 
 O modo local é identificado na interface e será mantido durante todas as fases do MVP. A integração com Supabase Auth, PostgreSQL, Storage e RLS será feita somente depois da conclusão dos módulos.
 
+## Supabase
+
+O cliente oficial e a primeira migration já estão preparados em [`supabase/migrations`](./supabase/migrations). O arquivo `.env.local` contém somente a URL e a chave pública do projeto e permanece ignorado pelo Git.
+
+As tabelas da migration usam RLS e liberam acesso apenas para usuários autenticados. A aplicação ainda continua usando o modo local até a autenticação e a migração de cada módulo serem implementadas.
+
+Depois de aplicar a migration no projeto Supabase, crie o primeiro usuário em **Authentication > Users**. Não publique a senha do banco nem qualquer chave `service_role`/`secret`.
+
 ## Executar
 
 ```bash
