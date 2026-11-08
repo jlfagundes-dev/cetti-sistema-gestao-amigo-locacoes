@@ -269,6 +269,45 @@ function quoteFromRemoteRow(row: { id: string; number: string; customer_id: stri
   };
 }
 
+function contractFromRemoteRow(row: { id: string; number: string; quote_id: string; customer_id: string; work_address_id: string | null; start_date: string; due_date: string; total: number; status: Contract["status"]; created_at: string; contract_items: { id: string; equipment_id: string; quantity: number; days: number; unit_price: number; total: number }[] }, addressIndex: number): Contract {
+  return {
+    id: row.id,
+    number: row.number,
+    quoteId: row.quote_id,
+    customerId: row.customer_id,
+    workAddressIndex: addressIndex,
+    startDate: row.start_date,
+    dueDate: row.due_date,
+    items: row.contract_items.map((item) => ({
+      id: item.id,
+      equipmentId: item.equipment_id,
+      quantity: item.quantity,
+      days: item.days,
+      unitPrice: Number(item.unit_price),
+      total: Number(item.total),
+    })),
+    total: Number(row.total),
+    status: row.status,
+    renewals: [],
+    createdAt: row.created_at,
+  };
+}
+
+function paymentFromRemoteRow(row: { id: string; contract_id: string; customer_id: string; description: string; due_amount: number; received_amount: number; due_date: string; payment_date: string; method: Payment["method"]; notes: string }): Payment {
+  return {
+    id: row.id,
+    contractId: row.contract_id,
+    customerId: row.customer_id,
+    description: row.description,
+    dueAmount: Number(row.due_amount),
+    receivedAmount: Number(row.received_amount),
+    dueDate: row.due_date,
+    paymentDate: row.payment_date,
+    method: row.method,
+    notes: row.notes,
+  };
+}
+
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -324,6 +363,46 @@ export default function Home() {
       setCustomers(remoteCustomers);
     }
     void loadRemoteCustomers();
+    return () => {
+      active = false;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (!supabase || !session) return;
+    const client = supabase;
+    let active = true;
+    async function loadRemoteContracts() {
+      const { data: contractRows, error: contractError } = await client
+        .from("contracts")
+        .select("id,number,quote_id,customer_id,work_address_id,start_date,due_date,total,status,created_at,contract_items(id,equipment_id,quantity,days,unit_price,total)")
+        .order("created_at", { ascending: false });
+      const { data: paymentRows, error: paymentError } = await client
+        .from("payments")
+        .select("id,contract_id,customer_id,description,due_amount,received_amount,due_date,payment_date,method,notes")
+        .order("created_at", { ascending: false });
+      if (!active) return;
+      if (contractError || paymentError) {
+        setNotice(`Supabase indisponível para locações: ${contractError?.message ?? paymentError?.message}`);
+        return;
+      }
+      const customerIds = [...new Set((contractRows ?? []).map((row) => row.customer_id))];
+      const { data: addresses, error: addressError } = customerIds.length
+        ? await client.from("customer_addresses").select("id,customer_id").in("customer_id", customerIds).order("created_at", { ascending: true })
+        : { data: [], error: null };
+      if (!active) return;
+      if (addressError) {
+        setNotice(`Não foi possível carregar os endereços das locações: ${addressError.message}`);
+        return;
+      }
+      setContracts((contractRows ?? []).map((row) => {
+        const customerAddresses = (addresses ?? []).filter((address) => address.customer_id === row.customer_id);
+        const addressIndex = customerAddresses.findIndex((address) => address.id === row.work_address_id);
+        return contractFromRemoteRow(row, Math.max(0, addressIndex));
+      }));
+      setPayments((paymentRows ?? []).map((row) => paymentFromRemoteRow(row)));
+    }
+    void loadRemoteContracts();
     return () => {
       active = false;
     };
@@ -591,7 +670,7 @@ export default function Home() {
     setNotice(`Orçamento ${quote.number} salvo como rascunho.`);
   }
 
-  function convertQuote(quote: Quote) {
+  async function convertQuote(quote: Quote) {
     if (contracts.some((item) => item.quoteId === quote.id)) {
       setNotice("Este orçamento já foi convertido em locação.");
       return;
@@ -610,6 +689,58 @@ export default function Home() {
       renewals: [],
       createdAt: new Date().toISOString(),
     };
+    if (supabase && session) {
+      const addresses = await supabase.from("customer_addresses").select("id").eq("customer_id", quote.customerId).order("created_at", { ascending: true });
+      const workAddressId = addresses.data?.[quote.workAddressIndex]?.id ?? null;
+      if (addresses.error || !workAddressId) {
+        setNotice(`Não foi possível vincular o endereço da obra à locação: ${addresses.error?.message ?? "endereço não encontrado"}`);
+        return;
+      }
+      const { data: savedContract, error } = await supabase.from("contracts").insert({
+        quote_id: quote.id,
+        customer_id: quote.customerId,
+        work_address_id: workAddressId,
+        number: contract.number,
+        start_date: contract.startDate,
+        due_date: contract.dueDate,
+        total: contract.total,
+        status: contract.status,
+      }).select("id,created_at").single();
+      if (error || !savedContract) {
+        setNotice(`Não foi possível salvar a locação no Supabase: ${error?.message ?? "resposta vazia"}`);
+        return;
+      }
+      const { data: savedItems, error: itemError } = await supabase.from("contract_items").insert(
+        quote.items.map((item) => ({ contract_id: savedContract.id, equipment_id: item.equipmentId, quantity: item.quantity, days: item.days, unit_price: item.unitPrice, total: item.total })),
+      ).select("id,equipment_id,quantity,days,unit_price,total");
+      if (itemError || !savedItems) {
+        await supabase.from("contracts").delete().eq("id", savedContract.id);
+        setNotice(`Não foi possível salvar os itens da locação: ${itemError?.message ?? "resposta vazia"}`);
+        return;
+      }
+      const { data: savedPayment, error: paymentError } = await supabase.from("payments").insert({
+        contract_id: savedContract.id,
+        customer_id: contract.customerId,
+        description: `Cobrança inicial ${contract.number}`,
+        due_amount: quote.total,
+        received_amount: 0,
+        due_date: contract.dueDate,
+        payment_date: localDate(),
+        method: "PIX",
+        notes: "Gerado automaticamente ao converter o orçamento em locação.",
+      }).select("id,contract_id,customer_id,description,due_amount,received_amount,due_date,payment_date,method,notes").single();
+      if (paymentError || !savedPayment) {
+        await supabase.from("contracts").delete().eq("id", savedContract.id);
+        setNotice(`Não foi possível criar a cobrança inicial: ${paymentError?.message ?? "resposta vazia"}`);
+        return;
+      }
+      await supabase.from("quotes").update({ status: "Assinado" }).eq("id", quote.id);
+      setContracts((current) => [{ ...contract, id: savedContract.id, createdAt: savedContract.created_at, items: savedItems.map((item) => ({ id: item.id, equipmentId: item.equipment_id, quantity: item.quantity, days: item.days, unitPrice: Number(item.unit_price), total: Number(item.total) })) }, ...current]);
+      setPayments((current) => [paymentFromRemoteRow(savedPayment), ...current]);
+      setQuotes((current) => current.map((item) => item.id === quote.id ? { ...item, status: "Assinado" } : item));
+      setNotice(`Contrato ${contract.number} criado e salvo no Supabase.`);
+      return;
+    }
     const openingPayment: Payment = {
       id: crypto.randomUUID(),
       contractId: contract.id,
