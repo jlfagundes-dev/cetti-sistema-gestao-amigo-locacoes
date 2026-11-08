@@ -29,6 +29,8 @@ Depois de aplicar a migration no projeto Supabase, crie o primeiro usuário em *
 
 Se aparecer `permission denied for table customers`, execute no SQL Editor o arquivo [`20261108164000_grant_authenticated_table_access.sql`](./supabase/migrations/20261108164000_grant_authenticated_table_access.sql). Ele concede as permissões SQL necessárias à role `authenticated`; o RLS continua ativo.
 
+Para produção, aplique também a migration [`20261108174000_scope_rls_by_authenticated_user.sql`](./supabase/migrations/20261108174000_scope_rls_by_authenticated_user.sql). Ela substitui as policies iniciais abertas por policies que isolam os registros do usuário autenticado. Execute-a somente depois de aplicar a migration inicial e a migration de grants.
+
 ## Executar
 
 ```bash
