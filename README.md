@@ -13,7 +13,7 @@ A aplicação contém as bases das **Fases 1, 2, 3 e 4 do MVP**, com a autentica
 - Conversão de orçamentos em locações, renovações com histórico e controle financeiro local. Com Supabase configurado, contratos, itens e a cobrança inicial são persistidos em `contracts`, `contract_items` e `payments`.
 - Renovações calculadas por novo ciclo, usando a faixa de preço do período adicional sem recalcular o ciclo anterior. Com Supabase configurado, o histórico e as cobranças adicionais são persistidos em `contract_renewals` e `payments`.
 - Cobrança financeira gerada automaticamente ao criar a locação, com vencimento no início mais o período contratado e recebimentos parciais persistidos em `payments`.
-- Tela de recolhimentos com filtros, status da coleta, Maps, navegação e WhatsApp.
+- Tela de recolhimentos com filtros, status da coleta, Maps, navegação e WhatsApp. Com Supabase configurado, os status são carregados e persistidos em `collection_tasks`.
 - Navegação responsiva para desktop e celular.
 - Diretrizes do projeto em [`.github/copilot-instructions.md`](./.github/copilot-instructions.md).
 

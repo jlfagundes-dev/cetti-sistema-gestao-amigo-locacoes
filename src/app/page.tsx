@@ -316,6 +316,15 @@ function paymentFromRemoteRow(row: { id: string; contract_id: string; customer_i
   };
 }
 
+function collectionTaskFromRemoteRow(row: { id: string; contract_id: string; status: CollectionStatus; updated_at: string }): CollectionTask {
+  return {
+    id: row.id,
+    contractId: row.contract_id,
+    status: row.status,
+    updatedAt: row.updated_at,
+  };
+}
+
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -389,9 +398,13 @@ export default function Home() {
         .from("payments")
         .select("id,contract_id,customer_id,description,due_amount,received_amount,due_date,payment_date,method,notes")
         .order("created_at", { ascending: false });
+      const { data: taskRows, error: taskError } = await client
+        .from("collection_tasks")
+        .select("id,contract_id,status,updated_at")
+        .order("updated_at", { ascending: false });
       if (!active) return;
-      if (contractError || paymentError) {
-        setNotice(`Supabase indisponível para locações: ${contractError?.message ?? paymentError?.message}`);
+      if (contractError || paymentError || taskError) {
+        setNotice(`Supabase indisponível para operação: ${contractError?.message ?? paymentError?.message ?? taskError?.message}`);
         return;
       }
       const customerIds = [...new Set((contractRows ?? []).map((row) => row.customer_id))];
@@ -409,6 +422,7 @@ export default function Home() {
         return contractFromRemoteRow(row, Math.max(0, addressIndex));
       }));
       setPayments((paymentRows ?? []).map((row) => paymentFromRemoteRow(row)));
+      setCollectionTasks((taskRows ?? []).map((row) => collectionTaskFromRemoteRow(row)));
     }
     void loadRemoteContracts();
     return () => {
@@ -825,7 +839,7 @@ export default function Home() {
           {view === "orcamentos" && <Quotes customers={customers} equipment={equipment} quotes={quotes} onSave={saveQuote} onNotice={setNotice} onConvert={convertQuote} />}
           {view === "locacoes" && <Contracts customers={customers} equipment={equipment} contracts={contracts} setContracts={setContracts} payments={payments} setPayments={setPayments} session={session} onNotice={setNotice} />}
           {view === "financeiro" && <Finance customers={customers} contracts={contracts} payments={payments} setPayments={setPayments} session={session} onNotice={setNotice} />}
-          {view === "recolhimentos" && <Collections customers={customers} equipment={equipment} contracts={contracts} payments={payments} tasks={collectionTasks} setTasks={setCollectionTasks} onNotice={setNotice} />}
+          {view === "recolhimentos" && <Collections customers={customers} equipment={equipment} contracts={contracts} payments={payments} tasks={collectionTasks} setTasks={setCollectionTasks} session={session} onNotice={setNotice} />}
         </div>
       </main>
     </div>
@@ -1142,7 +1156,7 @@ function Finance({ customers, contracts, payments, setPayments, session, onNotic
   return <section><div className="section-heading"><div><p className="eyebrow">CONTROLE FINANCEIRO</p><h1>Financeiro</h1><p>As cobranças são geradas na locação; aqui você registra recebimentos parciais.</p></div><button className="primary-button" onClick={() => setShowForm(!showForm)}><span>+</span> Registrar recebimento</button></div><div className="finance-metrics"><div className="finance-metric"><span>Total recebido</span><strong>{money(received)}</strong></div><div className="finance-metric"><span>Total pendente</span><strong>{money(pending)}</strong></div><div className="finance-metric"><span>Lançamentos</span><strong>{payments.length}</strong></div></div>{showForm && <form className="form-card" onSubmit={savePayment}><div className="form-heading"><div><h2>Registrar recebimento</h2><p className="form-description">O valor devido e o vencimento vêm automaticamente da cobrança da locação.</p></div><button type="button" className="close-form" onClick={() => setShowForm(false)}>×</button></div><div className="form-grid"><label>Locação<select required name="contractId" value={selectedContractId} onChange={(event) => { setSelectedContractId(event.target.value); setReceivedAmount(0); }}><option value="">Selecione uma locação</option>{contracts.map((contract) => <option value={contract.id} key={contract.id}>{contract.number} - {customers.find((item) => item.id === contract.customerId)?.name}</option>)}</select></label><label>Descrição<input required name="description" defaultValue="Pagamento da locação" /></label><label>Valor devido<input required name="dueAmount" type="number" value={remaining} readOnly /></label><label>Valor recebido<input required name="receivedAmount" type="number" min="0" max={remaining} step="0.01" value={receivedAmount} onChange={(event) => setReceivedAmount(Number(event.target.value))} /><small className="field-help">Este é o saldo restante. Exemplo: uma cobrança de R$ 80,00 com R$ 40,00 recebidos mostrará R$ 40,00.</small></label><label>Vencimento<input required name="dueDate" type="date" value={selectedCharge?.dueDate ?? selectedContract?.dueDate ?? ""} readOnly /></label><label>Data do pagamento<input name="paymentDate" type="date" value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} /></label><label>Forma de pagamento<select name="method"><option>PIX</option><option>Dinheiro</option><option>Transferência</option><option>Outros</option></select></label><label>Observações<input name="notes" /></label></div><div className="form-actions"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancelar</button><button className="primary-button" disabled={!selectedCharge || remaining <= 0}>Salvar recebimento</button></div></form>}{payments.length === 0 ? <div className="panel"><div className="empty-state"><div className="empty-icon soft">R$</div><strong>Nenhum lançamento financeiro</strong><p>As cobranças são criadas automaticamente ao converter um orçamento em locação.</p></div></div> : <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>CLIENTE</th><th>DESCRIÇÃO</th><th>DEVIDO</th><th>RECEBIDO</th><th>VENCIMENTO</th><th>STATUS</th></tr></thead><tbody>{payments.map((payment) => { const customer = customers.find((item) => item.id === payment.customerId); const status = payment.receivedAmount >= payment.dueAmount ? "Pago" : payment.receivedAmount > 0 ? "Pago parcialmente" : new Date(`${payment.dueDate}T23:59:59`) < new Date() ? "Atrasado" : "Pendente"; return <tr key={payment.id}><td><strong>{customer?.name ?? "Cliente"}</strong></td><td>{payment.description}</td><td>{money(payment.dueAmount)}</td><td>{money(payment.receivedAmount)}</td><td>{new Date(`${payment.dueDate}T12:00:00`).toLocaleDateString("pt-BR")}</td><td><span className={`quote-status ${status === "Pago" ? "paid-status" : ""}`}>{status}</span></td></tr>; })}</tbody></table></div></div>}</section>;
 }
 
-function Collections({ customers, equipment, contracts, payments, tasks, setTasks, onNotice }: { customers: Customer[]; equipment: Equipment[]; contracts: Contract[]; payments: Payment[]; tasks: CollectionTask[]; setTasks: (items: CollectionTask[]) => void; onNotice: (message: string) => void }) {
+function Collections({ customers, equipment, contracts, payments, tasks, setTasks, session, onNotice }: { customers: Customer[]; equipment: Equipment[]; contracts: Contract[]; payments: Payment[]; tasks: CollectionTask[]; setTasks: (items: CollectionTask[]) => void; session: Session | null; onNotice: (message: string) => void }) {
   const [filter, setFilter] = useState<"today" | "tomorrow" | "week" | "overdue" | "all" | "date">("today");
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
   const today = new Date();
@@ -1166,9 +1180,28 @@ function Collections({ customers, equipment, contracts, payments, tasks, setTask
     const address = addressFor(customer, contract);
     return address ? `${address.street}, ${address.number}, ${address.neighborhood}, ${address.city}` : "";
   };
-  function updateTask(contractId: string, status: CollectionStatus) {
+  async function updateTask(contractId: string, status: CollectionStatus) {
     const existing = tasks.find((task) => task.contractId === contractId);
-    setTasks(existing ? tasks.map((task) => task.contractId === contractId ? { ...task, status, updatedAt: new Date().toISOString() } : task) : [...tasks, { id: crypto.randomUUID(), contractId, status, updatedAt: new Date().toISOString() }]);
+    const updatedAt = new Date().toISOString();
+    if (supabase && session) {
+      if (existing) {
+        const { data, error } = await supabase.from("collection_tasks").update({ status, updated_at: updatedAt }).eq("id", existing.id).select("id,contract_id,status,updated_at").single();
+        if (error || !data) {
+          onNotice(`Não foi possível atualizar o recolhimento: ${error?.message ?? "resposta vazia"}`);
+          return;
+        }
+        setTasks(tasks.map((task) => task.id === existing.id ? collectionTaskFromRemoteRow(data) : task));
+      } else {
+        const { data, error } = await supabase.from("collection_tasks").insert({ contract_id: contractId, status, updated_at: updatedAt }).select("id,contract_id,status,updated_at").single();
+        if (error || !data) {
+          onNotice(`Não foi possível salvar o recolhimento: ${error?.message ?? "resposta vazia"}`);
+          return;
+        }
+        setTasks([...tasks, collectionTaskFromRemoteRow(data)]);
+      }
+    } else {
+      setTasks(existing ? tasks.map((task) => task.contractId === contractId ? { ...task, status, updatedAt } : task) : [...tasks, { id: crypto.randomUUID(), contractId, status, updatedAt }]);
+    }
     onNotice(`Recolhimento marcado como: ${status}.`);
   }
   function whatsapp(customer: Customer, contract: Contract) {
