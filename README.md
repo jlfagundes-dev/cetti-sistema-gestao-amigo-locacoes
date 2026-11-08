@@ -4,12 +4,13 @@ Sistema mobile-first para gestão de locações de equipamentos da Amigo Locaç�
 
 ## Status
 
-A aplicação contém as bases das **Fases 1 e 2 do MVP**:
+A aplicação contém as bases das **Fases 1, 2 e 3 do MVP**:
 
 - Dashboard operacional com indicadores e estados vazios.
 - Cadastro local de clientes com endereço completo do cliente, múltiplos endereços de obra e link de localização copiado do WhatsApp para abrir no Maps (persistência temporária no navegador).
 - Catálogo inicial de equipamentos e regras de preço configuráveis.
 - Criação de orçamentos com múltiplos equipamentos, cálculo automático, desconto, status e impressão para PDF.
+- Conversão de orçamentos em locações, renovações com histórico e controle financeiro local.
 - Navegação responsiva para desktop e celular.
 - Diretrizes do projeto em [`.github/copilot-instructions.md`](./.github/copilot-instructions.md).
 

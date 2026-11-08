@@ -18,6 +18,7 @@ Aplicação web mobile-first para gestão da Amigo Locações de equipamentos pa
 - Preços devem ser configuráveis e calculados por um serviço centralizado, nunca fixados nos componentes.
 - Preserve histórico de clientes, locações, pagamentos e renovações; não sobrescreva contratos anteriores.
 - Renovações podem alterar o período original ou iniciar um novo ciclo, com diferença e histórico explícitos.
+- Orçamentos assinados podem virar locações; pagamentos aceitam recebimentos parciais e nunca devem apagar histórico.
 - Use os status e condições comerciais definidos no escopo do projeto.
 
 ## Experiência e qualidade

@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type View = "dashboard" | "clientes" | "equipamentos" | "orcamentos";
+type View = "dashboard" | "clientes" | "equipamentos" | "orcamentos" | "locacoes" | "financeiro";
 
 type Address = {
   street: string;
@@ -59,6 +59,44 @@ type Quote = {
   createdAt: string;
 };
 
+type Contract = {
+  id: string;
+  number: string;
+  quoteId: string;
+  customerId: string;
+  workAddressIndex: number;
+  startDate: string;
+  dueDate: string;
+  items: QuoteItem[];
+  total: number;
+  status: "Ativo" | "Vencendo" | "Vencido" | "Renovado" | "Encerrado" | "Cancelado";
+  renewals: Renewal[];
+  createdAt: string;
+};
+
+type Renewal = {
+  id: string;
+  mode: "Alteração do período original" | "Novo ciclo de locação";
+  date: string;
+  additionalDays: number;
+  additionalValue: number;
+  newDueDate: string;
+  user: string;
+};
+
+type Payment = {
+  id: string;
+  contractId: string;
+  customerId: string;
+  description: string;
+  dueAmount: number;
+  receivedAmount: number;
+  dueDate: string;
+  paymentDate: string;
+  method: "PIX" | "Dinheiro" | "Transferência" | "Outros";
+  notes: string;
+};
+
 const initialEquipment: Equipment[] = [
   {
     id: "martelete-10",
@@ -107,6 +145,8 @@ const navigation: { id: View; label: string; icon: string }[] = [
   { id: "clientes", label: "Clientes", icon: "♙" },
   { id: "equipamentos", label: "Equipamentos", icon: "▣" },
   { id: "orcamentos", label: "Orçamentos", icon: "▤" },
+  { id: "locacoes", label: "Locações", icon: "↗" },
+  { id: "financeiro", label: "Financeiro", icon: "R$" },
 ];
 
 function priceFor(equipment: Equipment, days: number) {
@@ -120,6 +160,12 @@ function priceFor(equipment: Equipment, days: number) {
 
 function money(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function addDays(date: string, days: number) {
+  const result = new Date(`${date}T12:00:00`);
+  result.setDate(result.getDate() + days);
+  return result.toISOString().slice(0, 10);
 }
 
 function readStorage<T>(key: string, fallback: T): T {
@@ -138,6 +184,8 @@ export default function Home() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [equipment, setEquipment] = useState<Equipment[]>(initialEquipment);
   const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [contracts, setContracts] = useState<Contract[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
   const [showCustomerForm, setShowCustomerForm] = useState(false);
   const [notice, setNotice] = useState("");
 
@@ -146,6 +194,8 @@ export default function Home() {
       setCustomers(readStorage<Customer[]>("amigo-customers", []));
       setEquipment(readStorage<Equipment[]>("amigo-equipment", initialEquipment));
       setQuotes(readStorage<Quote[]>("amigo-quotes", []));
+      setContracts(readStorage<Contract[]>("amigo-contracts", []));
+      setPayments(readStorage<Payment[]>("amigo-payments", []));
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -155,8 +205,10 @@ export default function Home() {
       window.localStorage.setItem("amigo-customers", JSON.stringify(customers));
       window.localStorage.setItem("amigo-equipment", JSON.stringify(equipment));
       window.localStorage.setItem("amigo-quotes", JSON.stringify(quotes));
+      window.localStorage.setItem("amigo-contracts", JSON.stringify(contracts));
+      window.localStorage.setItem("amigo-payments", JSON.stringify(payments));
     }
-  }, [customers, equipment, quotes]);
+  }, [customers, equipment, quotes, contracts, payments]);
 
   const activeEquipment = useMemo(
     () => equipment.filter((item) => item.active).length,
@@ -209,6 +261,30 @@ export default function Home() {
     setNotice(`Orçamento ${quote.number} salvo como rascunho.`);
   }
 
+  function convertQuote(quote: Quote) {
+    if (contracts.some((item) => item.quoteId === quote.id)) {
+      setNotice("Este orçamento já foi convertido em locação.");
+      return;
+    }
+    const contract: Contract = {
+      id: crypto.randomUUID(),
+      number: `CTR-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
+      quoteId: quote.id,
+      customerId: quote.customerId,
+      workAddressIndex: quote.workAddressIndex,
+      startDate: quote.startDate,
+      dueDate: addDays(quote.startDate, Math.max(...quote.items.map((item) => item.days))),
+      items: quote.items,
+      total: quote.total,
+      status: "Ativo",
+      renewals: [],
+      createdAt: new Date().toISOString(),
+    };
+    setContracts((current) => [contract, ...current]);
+    setQuotes((current) => current.map((item) => item.id === quote.id ? { ...item, status: "Assinado" } : item));
+    setNotice(`Contrato ${contract.number} criado com sucesso.`);
+  }
+
   return (
     <div className="app-shell">
       <aside className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
@@ -234,13 +310,8 @@ export default function Home() {
           ))}
           <small className="nav-section">OPERAÇÃO</small>
           <button className="nav-item nav-item-muted" onClick={() => setNotice("O módulo de recolhimentos será desenvolvido na Fase 4.")}>
-            <span className="nav-icon">↗</span>
+            <span className="nav-icon">⌖</span>
             Recolhimentos
-            <span className="soon">breve</span>
-          </button>
-          <button className="nav-item nav-item-muted" onClick={() => setNotice("O módulo financeiro será desenvolvido na Fase 3.")}>
-            <span className="nav-icon">▤</span>
-            Financeiro
             <span className="soon">breve</span>
           </button>
         </nav>
@@ -263,7 +334,7 @@ export default function Home() {
 
         <div className="page-content">
           {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice("")}>×</button></div>}
-          {view === "dashboard" && <Dashboard customers={customers} activeEquipment={activeEquipment} navigate={navigate} onNotice={setNotice} />}
+          {view === "dashboard" && <Dashboard customers={customers} activeEquipment={activeEquipment} contracts={contracts} payments={payments} navigate={navigate} onNotice={setNotice} />}
           {view === "clientes" && (
             <Customers
               customers={customers}
@@ -273,7 +344,9 @@ export default function Home() {
             />
           )}
           {view === "equipamentos" && <EquipmentList equipment={equipment} setEquipment={setEquipment} onNotice={setNotice} />}
-          {view === "orcamentos" && <Quotes customers={customers} equipment={equipment} quotes={quotes} onSave={saveQuote} onNotice={setNotice} />}
+          {view === "orcamentos" && <Quotes customers={customers} equipment={equipment} quotes={quotes} onSave={saveQuote} onNotice={setNotice} onConvert={convertQuote} />}
+          {view === "locacoes" && <Contracts customers={customers} equipment={equipment} contracts={contracts} setContracts={setContracts} onNotice={setNotice} />}
+          {view === "financeiro" && <Finance customers={customers} contracts={contracts} payments={payments} setPayments={setPayments} onNotice={setNotice} />}
         </div>
       </main>
     </div>
@@ -284,12 +357,12 @@ function pageTitle(view: View) {
   return view === "dashboard" ? "Visão geral" : view[0].toUpperCase() + view.slice(1);
 }
 
-function Dashboard({ customers, activeEquipment, navigate, onNotice }: { customers: Customer[]; activeEquipment: number; navigate: (view: View) => void; onNotice: (message: string) => void }) {
+function Dashboard({ customers, activeEquipment, contracts, payments, navigate, onNotice }: { customers: Customer[]; activeEquipment: number; contracts: Contract[]; payments: Payment[]; navigate: (view: View) => void; onNotice: (message: string) => void }) {
   const cards = [
     { label: "Clientes cadastrados", value: customers.length, icon: "♙", action: () => navigate("clientes"), tone: "purple" },
     { label: "Equipamentos ativos", value: activeEquipment, icon: "▣", action: () => navigate("equipamentos"), tone: "blue" },
-    { label: "Locações ativas", value: 0, icon: "↗", action: () => undefined, tone: "green" },
-    { label: "Pagamentos pendentes", value: 0, icon: "R$", action: () => undefined, tone: "orange" },
+    { label: "Locações ativas", value: contracts.filter((item) => item.status === "Ativo" || item.status === "Renovado").length, icon: "↗", action: () => navigate("locacoes"), tone: "green" },
+    { label: "Pagamentos pendentes", value: payments.filter((item) => item.receivedAmount < item.dueAmount).length, icon: "R$", action: () => navigate("financeiro"), tone: "orange" },
   ];
   return (
     <>
@@ -324,7 +397,7 @@ function Customers({ customers, showForm, setShowForm, onSubmit }: { customers: 
   </section>;
 }
 
-function Quotes({ customers, equipment, quotes, onSave, onNotice }: { customers: Customer[]; equipment: Equipment[]; quotes: Quote[]; onSave: (quote: Quote) => void; onNotice: (message: string) => void }) {
+function Quotes({ customers, equipment, quotes, onSave, onNotice, onConvert }: { customers: Customer[]; equipment: Equipment[]; quotes: Quote[]; onSave: (quote: Quote) => void; onNotice: (message: string) => void; onConvert: (quote: Quote) => void }) {
   const [creating, setCreating] = useState(false);
   const [customerId, setCustomerId] = useState(customers[0]?.id ?? "");
   const [addressIndex, setAddressIndex] = useState(0);
@@ -410,8 +483,45 @@ function Quotes({ customers, equipment, quotes, onSave, onNotice }: { customers:
     </form>}
     {customers.length === 0 && !creating && <div className="panel"><div className="empty-state"><div className="empty-icon">▤</div><strong>Cadastre um cliente antes de criar um orçamento</strong><p>O orçamento precisa de um cliente e de um endereço de obra.</p></div></div>}
     {customers.length > 0 && quotes.length === 0 && !creating && <div className="panel"><div className="empty-state"><div className="empty-icon">▤</div><strong>Nenhum orçamento criado</strong><p>Crie seu primeiro orçamento para começar a acompanhar as propostas.</p></div></div>}
-    {quotes.length > 0 && <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>NÚMERO</th><th>CLIENTE</th><th>INÍCIO</th><th>TOTAL</th><th>STATUS</th><th>DOCUMENTO</th></tr></thead><tbody>{quotes.map((quote) => <tr key={quote.id}><td><strong>{quote.number}</strong></td><td>{customers.find((item) => item.id === quote.customerId)?.name ?? "Cliente"}</td><td>{new Date(`${quote.startDate}T${quote.startTime}`).toLocaleString("pt-BR")}</td><td><strong>{money(quote.total)}</strong></td><td><span className="quote-status">{quote.status}</span></td><td><button className="text-button" onClick={() => printQuote(quote)}>Imprimir / PDF</button></td></tr>)}</tbody></table></div></div>}
+    {quotes.length > 0 && <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>NÚMERO</th><th>CLIENTE</th><th>INÍCIO</th><th>TOTAL</th><th>STATUS</th><th>AÇÕES</th></tr></thead><tbody>{quotes.map((quote) => <tr key={quote.id}><td><strong>{quote.number}</strong></td><td>{customers.find((item) => item.id === quote.customerId)?.name ?? "Cliente"}</td><td>{new Date(`${quote.startDate}T${quote.startTime}`).toLocaleString("pt-BR")}</td><td><strong>{money(quote.total)}</strong></td><td><span className="quote-status">{quote.status}</span></td><td><button className="text-button" onClick={() => printQuote(quote)}>PDF</button>{" "}{quote.status !== "Assinado" && <button className="text-button" onClick={() => onConvert({ ...quote, status: "Assinado" })}>Assinar / criar locação</button>}{quote.status === "Assinado" && <span className="no-map">Locação criada</span>}</td></tr>)}</tbody></table></div></div>}
   </section>;
+}
+
+function Contracts({ customers, equipment, contracts, setContracts, onNotice }: { customers: Customer[]; equipment: Equipment[]; contracts: Contract[]; setContracts: (items: Contract[]) => void; onNotice: (message: string) => void }) {
+  const [renewing, setRenewing] = useState<string | null>(null);
+  const [mode, setMode] = useState<Renewal["mode"]>("Alteração do período original");
+  const [days, setDays] = useState(1);
+
+  function renew(contract: Contract) {
+    const itemValue = contract.items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+    const additionalValue = mode === "Novo ciclo de locação" ? itemValue : itemValue * (days / Math.max(1, contract.items.reduce((sum, item) => sum + item.days, 0)));
+    const renewal: Renewal = { id: crypto.randomUUID(), mode, date: new Date().toISOString(), additionalDays: days, additionalValue, newDueDate: addDays(contract.dueDate, days), user: "Administrador" };
+    setContracts(contracts.map((item) => item.id === contract.id ? { ...item, dueDate: renewal.newDueDate, total: item.total + additionalValue, status: "Renovado", renewals: [...item.renewals, renewal] } : item));
+    setRenewing(null);
+    onNotice(`Renovação registrada. Valor adicional: ${money(additionalValue)}.`);
+  }
+
+  return <section><div className="section-heading"><div><p className="eyebrow">OPERAÇÃO</p><h1>Locações</h1><p>Contratos ativos, vencimentos e histórico de renovações.</p></div></div>{contracts.length === 0 ? <div className="panel"><div className="empty-state"><div className="empty-icon">↗</div><strong>Nenhuma locação criada</strong><p>Assine um orçamento para convertê-lo em contrato.</p></div></div> : <div className="contract-grid">{contracts.map((contract) => { const customer = customers.find((item) => item.id === contract.customerId); return <article className="contract-card" key={contract.id}><div className="contract-header"><div><p className="eyebrow">{contract.number}</p><h2>{customer?.name ?? "Cliente"}</h2></div><span className="quote-status contract-status">{contract.status}</span></div><div className="contract-details"><span>Início<strong>{new Date(`${contract.startDate}T12:00:00`).toLocaleDateString("pt-BR")}</strong></span><span>Devolução<strong>{new Date(`${contract.dueDate}T12:00:00`).toLocaleDateString("pt-BR")}</strong></span><span>Valor<strong>{money(contract.total)}</strong></span></div><p className="contract-equipment">{contract.items.map((item) => `${item.quantity}x ${equipment.find((entry) => entry.id === item.equipmentId)?.name ?? "Equipamento"}`).join(" · ")}</p>{contract.renewals.length > 0 && <p className="renewal-history">{contract.renewals.length} renovação(ões) registrada(s)</p>}{renewing === contract.id ? <div className="renew-form"><label>Modalidade<select value={mode} onChange={(event) => setMode(event.target.value as Renewal["mode"])}><option>Alteração do período original</option><option>Novo ciclo de locação</option></select></label><label>Dias adicionais<input type="number" min="1" value={days} onChange={(event) => setDays(Math.max(1, Number(event.target.value)))} /></label><div className="form-actions"><button className="secondary-button" onClick={() => setRenewing(null)}>Cancelar</button><button className="primary-button" onClick={() => renew(contract)}>Confirmar renovação</button></div></div> : <button className="secondary-button" onClick={() => setRenewing(contract.id)}>Renovar locação</button>}</article>; })}</div>}</section>;
+}
+
+function Finance({ customers, contracts, payments, setPayments, onNotice }: { customers: Customer[]; contracts: Contract[]; payments: Payment[]; setPayments: (items: Payment[]) => void; onNotice: (message: string) => void }) {
+  const [showForm, setShowForm] = useState(false);
+  const received = payments.reduce((sum, item) => sum + item.receivedAmount, 0);
+  const pending = payments.reduce((sum, item) => sum + Math.max(0, item.dueAmount - item.receivedAmount), 0);
+
+  function savePayment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const contract = contracts.find((item) => item.id === String(data.get("contractId")));
+    if (!contract) { onNotice("Selecione uma locação válida."); return; }
+    const payment: Payment = { id: crypto.randomUUID(), contractId: contract.id, customerId: contract.customerId, description: String(data.get("description") ?? "Locação"), dueAmount: Number(data.get("dueAmount") ?? 0), receivedAmount: Number(data.get("receivedAmount") ?? 0), dueDate: String(data.get("dueDate") ?? ""), paymentDate: String(data.get("paymentDate") ?? ""), method: String(data.get("method") ?? "PIX") as Payment["method"], notes: String(data.get("notes") ?? "") };
+    setPayments([payment, ...payments]);
+    setShowForm(false);
+    onNotice("Lançamento financeiro salvo.");
+    event.currentTarget.reset();
+  }
+
+  return <section><div className="section-heading"><div><p className="eyebrow">CONTROLE FINANCEIRO</p><h1>Financeiro</h1><p>Registre valores devidos, recebimentos e pagamentos parciais.</p></div><button className="primary-button" onClick={() => setShowForm(!showForm)}><span>+</span> Novo lançamento</button></div><div className="finance-metrics"><div className="finance-metric"><span>Total recebido</span><strong>{money(received)}</strong></div><div className="finance-metric"><span>Total pendente</span><strong>{money(pending)}</strong></div><div className="finance-metric"><span>Lançamentos</span><strong>{payments.length}</strong></div></div>{showForm && <form className="form-card" onSubmit={savePayment}><div className="form-heading"><h2>Novo lançamento</h2><button type="button" className="close-form" onClick={() => setShowForm(false)}>×</button></div><div className="form-grid"><label>Locação<select required name="contractId"><option value="">Selecione uma locação</option>{contracts.map((contract) => <option value={contract.id} key={contract.id}>{contract.number} - {customers.find((item) => item.id === contract.customerId)?.name}</option>)}</select></label><label>Descrição<input required name="description" defaultValue="Pagamento da locação" /></label><label>Valor devido<input required name="dueAmount" type="number" min="0" step="0.01" /></label><label>Valor recebido<input required name="receivedAmount" type="number" min="0" step="0.01" defaultValue="0" /></label><label>Vencimento<input required name="dueDate" type="date" /></label><label>Data do pagamento<input name="paymentDate" type="date" /></label><label>Forma de pagamento<select name="method"><option>PIX</option><option>Dinheiro</option><option>Transferência</option><option>Outros</option></select></label><label>Observações<input name="notes" /></label></div><div className="form-actions"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancelar</button><button className="primary-button">Salvar lançamento</button></div></form>}{payments.length === 0 ? <div className="panel"><div className="empty-state"><div className="empty-icon soft">R$</div><strong>Nenhum lançamento financeiro</strong><p>Registre o primeiro pagamento de uma locação.</p></div></div> : <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>CLIENTE</th><th>DESCRIÇÃO</th><th>DEVIDO</th><th>RECEBIDO</th><th>STATUS</th></tr></thead><tbody>{payments.map((payment) => { const customer = customers.find((item) => item.id === payment.customerId); const status = payment.receivedAmount >= payment.dueAmount ? "Pago" : payment.receivedAmount > 0 ? "Pago parcialmente" : new Date(payment.dueDate) < new Date() ? "Atrasado" : "Pendente"; return <tr key={payment.id}><td><strong>{customer?.name ?? "Cliente"}</strong></td><td>{payment.description}</td><td>{money(payment.dueAmount)}</td><td>{money(payment.receivedAmount)}</td><td><span className={`quote-status ${status === "Pago" ? "paid-status" : ""}`}>{status}</span></td></tr>; })}</tbody></table></div></div>}</section>;
 }
 
 function EquipmentList({ equipment, setEquipment, onNotice }: { equipment: Equipment[]; setEquipment: (items: Equipment[]) => void; onNotice: (message: string) => void }) {
