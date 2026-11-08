@@ -245,6 +245,30 @@ function equipmentFromRemoteRow(row: { id: string; name: string; category: strin
   };
 }
 
+function quoteFromRemoteRow(row: { id: string; number: string; customer_id: string; work_address_id: string | null; start_date: string; start_time: string; subtotal: number; discount: number; total: number; status: Quote["status"]; created_at: string; quote_items: { id: string; equipment_id: string; quantity: number; days: number; unit_price: number; total: number }[] }, addressIndex: number): Quote {
+  return {
+    id: row.id,
+    number: row.number,
+    customerId: row.customer_id,
+    workAddressIndex: addressIndex,
+    startDate: row.start_date,
+    startTime: row.start_time.slice(0, 5),
+    items: row.quote_items.map((item) => ({
+      id: item.id,
+      equipmentId: item.equipment_id,
+      quantity: item.quantity,
+      days: item.days,
+      unitPrice: Number(item.unit_price),
+      total: Number(item.total),
+    })),
+    subtotal: Number(row.subtotal),
+    discount: Number(row.discount),
+    total: Number(row.total),
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
+
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -300,6 +324,42 @@ export default function Home() {
       setCustomers(remoteCustomers);
     }
     void loadRemoteCustomers();
+    return () => {
+      active = false;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (!supabase || !session) return;
+    const client = supabase;
+    let active = true;
+    async function loadRemoteQuotes() {
+      const { data, error } = await client
+        .from("quotes")
+        .select("id,number,customer_id,work_address_id,start_date,start_time,subtotal,discount,total,status,created_at,quote_items(id,equipment_id,quantity,days,unit_price,total)")
+        .order("created_at", { ascending: false });
+      if (!active) return;
+      if (error) {
+        setNotice(`Supabase indisponível para orçamentos. Continuando no modo local: ${error.message}`);
+        return;
+      }
+      const customerIds = [...new Set((data ?? []).map((row) => row.customer_id))];
+      const { data: addresses, error: addressError } = customerIds.length
+        ? await client.from("customer_addresses").select("id,customer_id").in("customer_id", customerIds).order("created_at", { ascending: true })
+        : { data: [], error: null };
+      if (!active) return;
+      if (addressError) {
+        setNotice(`Não foi possível carregar os endereços dos orçamentos: ${addressError.message}`);
+        return;
+      }
+      const remoteQuotes = (data ?? []).map((row) => {
+        const customerAddresses = (addresses ?? []).filter((address) => address.customer_id === row.customer_id);
+        const addressIndex = customerAddresses.findIndex((address) => address.id === row.work_address_id);
+        return quoteFromRemoteRow(row, Math.max(0, addressIndex));
+      });
+      setQuotes(remoteQuotes);
+    }
+    void loadRemoteQuotes();
     return () => {
       active = false;
     };
@@ -478,7 +538,55 @@ export default function Home() {
     form.reset();
   }
 
-  function saveQuote(quote: Quote) {
+  async function saveQuote(quote: Quote) {
+    if (supabase && session) {
+      const customerAddresses = await supabase
+        .from("customer_addresses")
+        .select("id")
+        .eq("customer_id", quote.customerId)
+        .order("created_at", { ascending: true });
+      const workAddressId = customerAddresses.data?.[quote.workAddressIndex]?.id ?? null;
+      if (customerAddresses.error || !workAddressId) {
+        setQuotes((current) => [quote, ...current]);
+        setNotice(`Não foi possível vincular o endereço da obra no Supabase. Orçamento mantido localmente: ${customerAddresses.error?.message ?? "endereço não encontrado"}`);
+        return;
+      }
+      const { data: savedQuote, error } = await supabase.from("quotes").insert({
+        customer_id: quote.customerId,
+        work_address_id: workAddressId,
+        number: quote.number,
+        start_date: quote.startDate,
+        start_time: quote.startTime,
+        subtotal: quote.subtotal,
+        discount: quote.discount,
+        total: quote.total,
+        status: quote.status,
+      }).select("id,number,customer_id,work_address_id,start_date,start_time,subtotal,discount,total,status,created_at").single();
+      if (error || !savedQuote) {
+        setQuotes((current) => [quote, ...current]);
+        setNotice(`Não foi possível salvar o orçamento no Supabase. Mantido localmente: ${error?.message ?? "resposta vazia"}`);
+        return;
+      }
+      const { data: savedItems, error: itemError } = await supabase.from("quote_items").insert(
+        quote.items.map((item) => ({
+          quote_id: savedQuote.id,
+          equipment_id: item.equipmentId,
+          quantity: item.quantity,
+          days: item.days,
+          unit_price: item.unitPrice,
+          total: item.total,
+        })),
+      ).select("id,equipment_id,quantity,days,unit_price,total");
+      if (itemError || !savedItems) {
+        await supabase.from("quotes").delete().eq("id", savedQuote.id);
+        setQuotes((current) => [quote, ...current]);
+        setNotice(`Não foi possível salvar os itens do orçamento: ${itemError?.message ?? "resposta vazia"}`);
+        return;
+      }
+      setQuotes((current) => [{ ...quote, id: savedQuote.id, createdAt: savedQuote.created_at, items: savedItems.map((item) => ({ id: item.id, equipmentId: item.equipment_id, quantity: item.quantity, days: item.days, unitPrice: Number(item.unit_price), total: Number(item.total) })) }, ...current]);
+      setNotice(`Orçamento ${quote.number} salvo no Supabase.`);
+      return;
+    }
     setQuotes((current) => [quote, ...current]);
     setNotice(`Orçamento ${quote.number} salvo como rascunho.`);
   }
