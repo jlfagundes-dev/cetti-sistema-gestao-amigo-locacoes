@@ -8,7 +8,7 @@ A aplicação contém as bases das **Fases 1, 2, 3 e 4 do MVP**, com a autentica
 
 - Dashboard operacional com indicadores e estados vazios.
 - Cadastro de clientes com endereço completo, múltiplos endereços de obra e link de localização copiado do WhatsApp para abrir no Maps. Com Supabase configurado, clientes e endereços de obra são persistidos no banco; sem conexão, o cadastro usa o armazenamento local como fallback.
-- Catálogo de equipamentos e regras de preço configuráveis. Com Supabase configurado, equipamentos, regras e status ativo são persistidos no banco; sem conexão, o catálogo usa o armazenamento local como fallback.
+- Catálogo de equipamentos e regras de preço configuráveis. Com Supabase configurado, equipamentos, regras e status ativo são persistidos no banco; se o catálogo remoto estiver vazio, os cinco equipamentos iniciais são cadastrados automaticamente. Sem conexão, o catálogo usa o armazenamento local como fallback.
 - Criação de orçamentos com múltiplos equipamentos, cálculo automático, desconto, status e impressão para PDF.
 - Conversão de orçamentos em locações, renovações com histórico e controle financeiro local.
 - Renovações calculadas por novo ciclo, usando a faixa de preço do período adicional sem recalcular o ciclo anterior.

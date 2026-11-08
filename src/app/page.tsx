@@ -319,7 +319,51 @@ export default function Home() {
         setNotice(`Supabase indisponível para equipamentos. Continuando no modo local: ${error.message}`);
         return;
       }
-      if (data?.length) setEquipment(data.map((row) => equipmentFromRemoteRow(row)));
+      if (data?.length) {
+        setEquipment(data.map((row) => equipmentFromRemoteRow(row)));
+        return;
+      }
+
+      const { data: savedEquipment, error: insertError } = await client
+        .from("equipment")
+        .insert(initialEquipment.map((item) => ({
+          name: item.name,
+          category: item.category,
+          billing_unit: item.billing,
+          billing_mode: item.billingMode ?? "daily",
+          active: item.active,
+        })))
+        .select("id,name,category,billing_unit,billing_mode,active");
+      if (insertError || !savedEquipment || savedEquipment.length !== initialEquipment.length) {
+        setNotice(`Não foi possível cadastrar o catálogo inicial no Supabase: ${insertError?.message ?? "resposta incompleta"}`);
+        return;
+      }
+
+      const rules = savedEquipment.flatMap((saved, index) =>
+        (initialEquipment[index].pricing ?? []).map((rule) => ({
+          equipment_id: saved.id,
+          min_days: rule.minDays,
+          max_days: rule.maxDays ?? null,
+          amount: rule.amount,
+        })),
+      );
+      const { error: rulesError } = await client.from("equipment_price_rules").insert(rules);
+      if (rulesError) {
+        await client.from("equipment").delete().in("id", savedEquipment.map((item) => item.id));
+        setNotice(`Não foi possível cadastrar as regras de preço iniciais: ${rulesError.message}`);
+        return;
+      }
+
+      const seeded = savedEquipment.map((saved, index) => ({
+        ...saved,
+        equipment_price_rules: initialEquipment[index].pricing?.map((rule) => ({
+          min_days: rule.minDays,
+          max_days: rule.maxDays ?? null,
+          amount: rule.amount,
+        })) ?? [],
+      }));
+      setEquipment(seeded.map((item) => equipmentFromRemoteRow(item)));
+      setNotice("Catálogo inicial cadastrado no Supabase.");
     }
     void loadRemoteEquipment();
     return () => {
