@@ -4,6 +4,16 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type View = "dashboard" | "clientes" | "equipamentos";
 
+type Address = {
+  street: string;
+  number: string;
+  neighborhood: string;
+  city: string;
+  zipCode: string;
+  complement: string;
+  reference?: string;
+};
+
 type Customer = {
   id: string;
   name: string;
@@ -11,6 +21,8 @@ type Customer = {
   phone: string;
   email: string;
   city: string;
+  address?: Address;
+  workAddresses?: Address[];
 };
 
 type Equipment = {
@@ -125,6 +137,23 @@ export default function Home() {
       phone: String(data.get("phone") ?? ""),
       email: String(data.get("email") ?? ""),
       city: String(data.get("city") ?? ""),
+      address: {
+        street: String(data.get("customerStreet") ?? ""),
+        number: String(data.get("customerNumber") ?? ""),
+        neighborhood: String(data.get("customerNeighborhood") ?? ""),
+        city: String(data.get("customerCity") ?? ""),
+        zipCode: String(data.get("customerZipCode") ?? ""),
+        complement: String(data.get("customerComplement") ?? ""),
+      },
+      workAddresses: Array.from({ length: Number(data.get("workAddressCount") ?? 1) }, (_, index) => ({
+        street: String(data.get(`workStreet-${index}`) ?? ""),
+        number: String(data.get(`workNumber-${index}`) ?? ""),
+        neighborhood: String(data.get(`workNeighborhood-${index}`) ?? ""),
+        city: String(data.get(`workCity-${index}`) ?? ""),
+        zipCode: String(data.get(`workZipCode-${index}`) ?? ""),
+        complement: String(data.get(`workComplement-${index}`) ?? ""),
+        reference: String(data.get(`workReference-${index}`) ?? ""),
+      })),
     };
     setCustomers((current) => [...current, customer]);
     setShowCustomerForm(false);
@@ -232,9 +261,17 @@ function Dashboard({ customers, activeEquipment, navigate, onNotice }: { custome
 }
 
 function Customers({ customers, showForm, setShowForm, onSubmit }: { customers: Customer[]; showForm: boolean; setShowForm: (value: boolean) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return <section><div className="section-heading"><div><p className="eyebrow">CADASTRO</p><h1>Clientes</h1><p>Gerencie seus clientes e os endereços de suas obras.</p></div><button className="primary-button" onClick={() => setShowForm(!showForm)}><span>+</span> Novo cliente</button></div>
-    {showForm && <form className="form-card" onSubmit={onSubmit}><div className="form-heading"><h2>Novo cliente</h2><button type="button" className="close-form" onClick={() => setShowForm(false)}>×</button></div><div className="form-grid"><label>Nome completo ou razão social<input required name="name" placeholder="Ex.: João da Silva" /></label><label>CPF/CNPJ<input required name="document" placeholder="000.000.000-00" /></label><label>Telefone / WhatsApp<input name="phone" placeholder="(00) 00000-0000" /></label><label>E-mail<input type="email" name="email" placeholder="cliente@email.com" /></label><label>Cidade<input name="city" placeholder="Sua cidade" /></label></div><div className="form-actions"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancelar</button><button className="primary-button">Salvar cliente</button></div></form>}
-    <div className="panel table-panel">{customers.length === 0 ? <div className="empty-state"><div className="empty-icon">♙</div><strong>Nenhum cliente cadastrado</strong><p>Comece cadastrando o primeiro cliente da Amigo Locações.</p><button className="text-button" onClick={() => setShowForm(true)}>Cadastrar primeiro cliente</button></div> : <div className="table-wrap"><table><thead><tr><th>CLIENTE</th><th>CPF/CNPJ</th><th>CONTATO</th><th>CIDADE</th><th /></tr></thead><tbody>{customers.map((customer) => <tr key={customer.id}><td><strong>{customer.name}</strong></td><td>{customer.document}</td><td>{customer.phone || customer.email || "—"}</td><td>{customer.city || "—"}</td><td><button className="row-action" aria-label={`Abrir ${customer.name}`}>···</button></td></tr>)}</tbody></table></div>}</div>
+  const [workAddressCount, setWorkAddressCount] = useState(1);
+
+  return <section><div className="section-heading"><div><p className="eyebrow">CADASTRO</p><h1>Clientes</h1><p>Gerencie os dados do cliente e os endereços das obras.</p></div><button className="primary-button" onClick={() => setShowForm(!showForm)}><span>+</span> Novo cliente</button></div>
+    {showForm && <form className="form-card" onSubmit={onSubmit}>
+      <div className="form-heading"><div><h2>Novo cliente</h2><p className="form-description">O endereço da obra será usado para entregar e recolher os equipamentos.</p></div><button type="button" className="close-form" onClick={() => setShowForm(false)}>×</button></div>
+      <div className="form-section"><div className="form-section-title"><span>1</span><div><h3>Dados do cliente</h3><p>Informações para contato e identificação.</p></div></div><div className="form-grid"><label>Nome completo ou razão social<input required name="name" placeholder="Ex.: João da Silva" /></label><label>CPF/CNPJ<input required name="document" placeholder="000.000.000-00" /></label><label>Telefone / WhatsApp<input name="phone" placeholder="(00) 00000-0000" /></label><label>E-mail<input type="email" name="email" placeholder="cliente@email.com" /></label></div></div>
+      <div className="form-section"><div className="form-section-title"><span>2</span><div><h3>Endereço do cliente</h3><p>Endereço residencial ou comercial para cadastro.</p></div></div><div className="form-grid"><label className="wide-field">Rua / Avenida<input required name="customerStreet" placeholder="Nome da rua ou avenida" /></label><label>Número<input required name="customerNumber" placeholder="123" /></label><label>Bairro<input required name="customerNeighborhood" placeholder="Bairro" /></label><label>Cidade<input required name="customerCity" placeholder="Cidade" /></label><label>CEP<input required name="customerZipCode" placeholder="00000-000" /></label><label>Complemento<input name="customerComplement" placeholder="Casa, sala, bloco..." /></label></div></div>
+      <div className="form-section"><div className="form-section-title"><span>3</span><div><h3>Endereço(s) da obra</h3><p>Local(is) onde os equipamentos serão deixados e recolhidos.</p></div></div><input type="hidden" name="workAddressCount" value={workAddressCount} />{Array.from({ length: workAddressCount }, (_, index) => <div className="work-address" key={index}><div className="work-address-heading"><strong>Obra {index + 1}</strong>{workAddressCount > 1 && <button type="button" className="remove-address" onClick={() => setWorkAddressCount((count) => count - 1)}>Remover</button>}</div><div className="form-grid"><label className="wide-field">Rua / Avenida<input required name={`workStreet-${index}`} placeholder="Nome da rua ou avenida" /></label><label>Número<input required name={`workNumber-${index}`} placeholder="123" /></label><label>Bairro<input required name={`workNeighborhood-${index}`} placeholder="Bairro" /></label><label>Cidade<input required name={`workCity-${index}`} placeholder="Cidade" /></label><label>CEP<input required name={`workZipCode-${index}`} placeholder="00000-000" /></label><label>Complemento<input name={`workComplement-${index}`} placeholder="Casa, sala, bloco..." /></label><label className="wide-field">Ponto de referência<input name={`workReference-${index}`} placeholder="Ex.: próximo ao portão azul" /></label></div></div>)}<button type="button" className="add-address" onClick={() => setWorkAddressCount((count) => count + 1)}>+ Adicionar outro endereço de obra</button></div>
+      <div className="form-actions"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancelar</button><button className="primary-button">Salvar cliente</button></div>
+    </form>}
+    <div className="panel table-panel">{customers.length === 0 ? <div className="empty-state"><div className="empty-icon">♙</div><strong>Nenhum cliente cadastrado</strong><p>Comece cadastrando o primeiro cliente da Amigo Locações.</p><button className="text-button" onClick={() => setShowForm(true)}>Cadastrar primeiro cliente</button></div> : <div className="table-wrap"><table><thead><tr><th>CLIENTE</th><th>CPF/CNPJ</th><th>CONTATO</th><th>ENDEREÇO DA OBRA</th><th /></tr></thead><tbody>{customers.map((customer) => { const workAddress = customer.workAddresses?.[0]; return <tr key={customer.id}><td><strong>{customer.name}</strong></td><td>{customer.document}</td><td>{customer.phone || customer.email || "—"}</td><td>{workAddress ? `${workAddress.street}, ${workAddress.number} - ${workAddress.city}` : "—"}{customer.workAddresses && customer.workAddresses.length > 1 && <small className="address-count"> +{customer.workAddresses.length - 1}</small>}</td><td><button className="row-action" aria-label={`Abrir ${customer.name}`}>···</button></td></tr>; })}</tbody></table></div>}</div>
   </section>;
 }
 
