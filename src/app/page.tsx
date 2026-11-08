@@ -269,7 +269,7 @@ function quoteFromRemoteRow(row: { id: string; number: string; customer_id: stri
   };
 }
 
-function contractFromRemoteRow(row: { id: string; number: string; quote_id: string; customer_id: string; work_address_id: string | null; start_date: string; due_date: string; total: number; status: Contract["status"]; created_at: string; contract_items: { id: string; equipment_id: string; quantity: number; days: number; unit_price: number; total: number }[] }, addressIndex: number): Contract {
+function contractFromRemoteRow(row: { id: string; number: string; quote_id: string; customer_id: string; work_address_id: string | null; start_date: string; due_date: string; total: number; status: Contract["status"]; created_at: string; contract_items: { id: string; equipment_id: string; quantity: number; days: number; unit_price: number; total: number }[]; contract_renewals: { id: string; mode: Renewal["mode"]; date: string; additional_days: number; additional_value: number; new_due_date: string }[] }, addressIndex: number): Contract {
   return {
     id: row.id,
     number: row.number,
@@ -288,7 +288,15 @@ function contractFromRemoteRow(row: { id: string; number: string; quote_id: stri
     })),
     total: Number(row.total),
     status: row.status,
-    renewals: [],
+    renewals: row.contract_renewals.map((renewal) => ({
+      id: renewal.id,
+      mode: renewal.mode,
+      date: renewal.date,
+      additionalDays: renewal.additional_days,
+      additionalValue: Number(renewal.additional_value),
+      newDueDate: renewal.new_due_date,
+      user: "Administrador",
+    })),
     createdAt: row.created_at,
   };
 }
@@ -375,7 +383,7 @@ export default function Home() {
     async function loadRemoteContracts() {
       const { data: contractRows, error: contractError } = await client
         .from("contracts")
-        .select("id,number,quote_id,customer_id,work_address_id,start_date,due_date,total,status,created_at,contract_items(id,equipment_id,quantity,days,unit_price,total)")
+        .select("id,number,quote_id,customer_id,work_address_id,start_date,due_date,total,status,created_at,contract_items(id,equipment_id,quantity,days,unit_price,total),contract_renewals(id,mode,date,additional_days,additional_value,new_due_date)")
         .order("created_at", { ascending: false });
       const { data: paymentRows, error: paymentError } = await client
         .from("payments")
@@ -815,8 +823,8 @@ export default function Home() {
           )}
           {view === "equipamentos" && <EquipmentList equipment={equipment} setEquipment={setEquipment} session={session} onNotice={setNotice} />}
           {view === "orcamentos" && <Quotes customers={customers} equipment={equipment} quotes={quotes} onSave={saveQuote} onNotice={setNotice} onConvert={convertQuote} />}
-          {view === "locacoes" && <Contracts customers={customers} equipment={equipment} contracts={contracts} setContracts={setContracts} payments={payments} setPayments={setPayments} onNotice={setNotice} />}
-          {view === "financeiro" && <Finance customers={customers} contracts={contracts} payments={payments} setPayments={setPayments} onNotice={setNotice} />}
+          {view === "locacoes" && <Contracts customers={customers} equipment={equipment} contracts={contracts} setContracts={setContracts} payments={payments} setPayments={setPayments} session={session} onNotice={setNotice} />}
+          {view === "financeiro" && <Finance customers={customers} contracts={contracts} payments={payments} setPayments={setPayments} session={session} onNotice={setNotice} />}
           {view === "recolhimentos" && <Collections customers={customers} equipment={equipment} contracts={contracts} payments={payments} tasks={collectionTasks} setTasks={setCollectionTasks} onNotice={setNotice} />}
         </div>
       </main>
@@ -977,11 +985,11 @@ function Quotes({ customers, equipment, quotes, onSave, onNotice, onConvert }: {
   </section>;
 }
 
-function Contracts({ customers, equipment, contracts, setContracts, payments, setPayments, onNotice }: { customers: Customer[]; equipment: Equipment[]; contracts: Contract[]; setContracts: (items: Contract[]) => void; payments: Payment[]; setPayments: (items: Payment[]) => void; onNotice: (message: string) => void }) {
+function Contracts({ customers, equipment, contracts, setContracts, payments, setPayments, session, onNotice }: { customers: Customer[]; equipment: Equipment[]; contracts: Contract[]; setContracts: (items: Contract[]) => void; payments: Payment[]; setPayments: (items: Payment[]) => void; session: Session | null; onNotice: (message: string) => void }) {
   const [renewing, setRenewing] = useState<string | null>(null);
   const [days, setDays] = useState(1);
 
-  function renew(contract: Contract) {
+  async function renew(contract: Contract) {
     const additionalValue = contract.items.reduce((sum, item) => {
       const selectedEquipment = equipment.find((entry) => entry.id === item.equipmentId);
       return selectedEquipment ? sum + priceFor(selectedEquipment, days) * item.quantity : sum;
@@ -999,8 +1007,53 @@ function Contracts({ customers, equipment, contracts, setContracts, payments, se
       method: "PIX",
       notes: "Gerado automaticamente pela renovação da locação.",
     };
-    setContracts(contracts.map((item) => item.id === contract.id ? { ...item, dueDate: renewal.newDueDate, total: item.total + additionalValue, status: "Renovado", renewals: [...item.renewals, renewal] } : item));
-    setPayments([renewalPayment, ...payments]);
+    if (supabase && session) {
+      const { data: savedRenewal, error: renewalError } = await supabase.from("contract_renewals").insert({
+        contract_id: contract.id,
+        mode: renewal.mode,
+        date: renewal.date,
+        additional_days: renewal.additionalDays,
+        additional_value: renewal.additionalValue,
+        new_due_date: renewal.newDueDate,
+      }).select("id").single();
+      if (renewalError || !savedRenewal) {
+        onNotice(`Não foi possível salvar a renovação: ${renewalError?.message ?? "resposta vazia"}`);
+        return;
+      }
+      const { error: contractError } = await supabase.from("contracts").update({
+        due_date: renewal.newDueDate,
+        total: contract.total + additionalValue,
+        status: "Renovado",
+      }).eq("id", contract.id);
+      if (contractError) {
+        await supabase.from("contract_renewals").delete().eq("id", savedRenewal.id);
+        onNotice(`Não foi possível atualizar a locação: ${contractError.message}`);
+        return;
+      }
+      const { data: savedPayment, error: paymentError } = await supabase.from("payments").insert({
+        contract_id: contract.id,
+        customer_id: contract.customerId,
+        description: renewalPayment.description,
+        due_amount: renewalPayment.dueAmount,
+        received_amount: 0,
+        due_date: renewalPayment.dueDate,
+        payment_date: renewalPayment.paymentDate,
+        method: renewalPayment.method,
+        notes: renewalPayment.notes,
+      }).select("id,contract_id,customer_id,description,due_amount,received_amount,due_date,payment_date,method,notes").single();
+      if (paymentError || !savedPayment) {
+        await supabase.from("contracts").update({ due_date: contract.dueDate, total: contract.total, status: contract.status }).eq("id", contract.id);
+        await supabase.from("contract_renewals").delete().eq("id", savedRenewal.id);
+        onNotice(`Não foi possível criar a cobrança da renovação: ${paymentError?.message ?? "resposta vazia"}`);
+        return;
+      }
+      const persistedRenewal = { ...renewal, id: savedRenewal.id };
+      setContracts(contracts.map((item) => item.id === contract.id ? { ...item, dueDate: renewal.newDueDate, total: item.total + additionalValue, status: "Renovado", renewals: [...item.renewals, persistedRenewal] } : item));
+      setPayments([paymentFromRemoteRow(savedPayment), ...payments]);
+    } else {
+      setContracts(contracts.map((item) => item.id === contract.id ? { ...item, dueDate: renewal.newDueDate, total: item.total + additionalValue, status: "Renovado", renewals: [...item.renewals, renewal] } : item));
+      setPayments([renewalPayment, ...payments]);
+    }
     setRenewing(null);
     onNotice(`Renovação registrada. Valor adicional: ${money(additionalValue)}.`);
   }
@@ -1008,7 +1061,7 @@ function Contracts({ customers, equipment, contracts, setContracts, payments, se
   return <section><div className="section-heading"><div><p className="eyebrow">OPERAÇÃO</p><h1>Locações</h1><p>Contratos ativos, vencimentos e histórico de renovações.</p></div></div>{contracts.length === 0 ? <div className="panel"><div className="empty-state"><div className="empty-icon">↗</div><strong>Nenhuma locação criada</strong><p>Assine um orçamento para convertê-lo em contrato.</p></div></div> : <div className="contract-grid">{contracts.map((contract) => { const customer = customers.find((item) => item.id === contract.customerId); return <article className="contract-card" key={contract.id}><div className="contract-header"><div><p className="eyebrow">{contract.number}</p><h2>{customer?.name ?? "Cliente"}</h2></div><span className="quote-status contract-status">{contract.status}</span></div><div className="contract-details"><span>Início<strong>{new Date(`${contract.startDate}T12:00:00`).toLocaleDateString("pt-BR")}</strong></span><span>Devolução<strong>{new Date(`${contract.dueDate}T12:00:00`).toLocaleDateString("pt-BR")}</strong></span><span>Valor acumulado<strong>{money(contract.total)}</strong></span></div><p className="contract-equipment">{contract.items.map((item) => `${item.quantity}x ${equipment.find((entry) => entry.id === item.equipmentId)?.name ?? "Equipamento"}`).join(" · ")}</p>{contract.renewals.length > 0 && <p className="renewal-history">{contract.renewals.length} renovação(ões) · último ciclo: {contract.renewals[contract.renewals.length - 1].additionalDays} dias / {money(contract.renewals[contract.renewals.length - 1].additionalValue)}</p>}{renewing === contract.id ? <div className="renew-form"><p className="renewal-help">Cada renovação é um novo ciclo. O valor será calculado pela faixa de preço dos dias renovados, sem alterar o que já foi cobrado.</p><label>Dias do novo ciclo<input type="number" min="1" value={days} onChange={(event) => setDays(Math.max(1, Number(event.target.value)))} /></label><div className="form-actions"><button className="secondary-button" onClick={() => setRenewing(null)}>Cancelar</button><button className="primary-button" onClick={() => renew(contract)}>Confirmar renovação</button></div></div> : <button className="secondary-button" onClick={() => setRenewing(contract.id)}>Renovar locação</button>}</article>; })}</div>}</section>;
 }
 
-function Finance({ customers, contracts, payments, setPayments, onNotice }: { customers: Customer[]; contracts: Contract[]; payments: Payment[]; setPayments: (items: Payment[]) => void; onNotice: (message: string) => void }) {
+function Finance({ customers, contracts, payments, setPayments, session, onNotice }: { customers: Customer[]; contracts: Contract[]; payments: Payment[]; setPayments: (items: Payment[]) => void; session: Session | null; onNotice: (message: string) => void }) {
   const [showForm, setShowForm] = useState(false);
   const [selectedContractId, setSelectedContractId] = useState("");
   const [receivedAmount, setReceivedAmount] = useState(0);
@@ -1018,7 +1071,7 @@ function Finance({ customers, contracts, payments, setPayments, onNotice }: { cu
   const received = payments.reduce((sum, item) => sum + item.receivedAmount, 0);
   const pending = payments.reduce((sum, item) => sum + Math.max(0, item.dueAmount - item.receivedAmount), 0);
 
-  function savePayment(event: FormEvent<HTMLFormElement>) {
+  async function savePayment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const contract = contracts.find((item) => item.id === selectedContractId);
@@ -1035,7 +1088,40 @@ function Finance({ customers, contracts, payments, setPayments, onNotice }: { cu
       method: String(data.get("method") ?? "PIX") as Payment["method"],
       notes: String(data.get("notes") ?? ""),
     };
-    setPayments(selectedCharge ? payments.map((item) => item.id === selectedCharge.id ? updatedPayment : item) : [updatedPayment, ...payments]);
+    if (supabase && session) {
+      if (selectedCharge) {
+        const { data: savedPayment, error } = await supabase.from("payments").update({
+          received_amount: updatedPayment.receivedAmount,
+          payment_date: updatedPayment.paymentDate,
+          method: updatedPayment.method,
+          notes: updatedPayment.notes,
+        }).eq("id", selectedCharge.id).select("id,contract_id,customer_id,description,due_amount,received_amount,due_date,payment_date,method,notes").single();
+        if (error || !savedPayment) {
+          onNotice(`Não foi possível registrar o recebimento: ${error?.message ?? "resposta vazia"}`);
+          return;
+        }
+        setPayments(payments.map((item) => item.id === selectedCharge.id ? paymentFromRemoteRow(savedPayment) : item));
+      } else {
+        const { data: savedPayment, error } = await supabase.from("payments").insert({
+          contract_id: contract.id,
+          customer_id: contract.customerId,
+          description: updatedPayment.description,
+          due_amount: updatedPayment.dueAmount,
+          received_amount: updatedPayment.receivedAmount,
+          due_date: updatedPayment.dueDate,
+          payment_date: updatedPayment.paymentDate,
+          method: updatedPayment.method,
+          notes: updatedPayment.notes,
+        }).select("id,contract_id,customer_id,description,due_amount,received_amount,due_date,payment_date,method,notes").single();
+        if (error || !savedPayment) {
+          onNotice(`Não foi possível salvar o recebimento: ${error?.message ?? "resposta vazia"}`);
+          return;
+        }
+        setPayments([paymentFromRemoteRow(savedPayment), ...payments]);
+      }
+    } else {
+      setPayments(selectedCharge ? payments.map((item) => item.id === selectedCharge.id ? updatedPayment : item) : [updatedPayment, ...payments]);
+    }
     setShowForm(false);
     onNotice("Lançamento financeiro salvo.");
     event.currentTarget.reset();
