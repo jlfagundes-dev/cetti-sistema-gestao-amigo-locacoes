@@ -25,6 +25,7 @@ Aplicação web mobile-first para gestão da Amigo Locações de equipamentos pa
 ## Experiência e qualidade
 
 - Priorize telas de operação em celular, especialmente recolhimentos.
+- A tela de recolhimentos deve permitir filtrar por data, abrir a localização da obra, iniciar navegação, contatar o cliente e atualizar o resultado da coleta.
 - Valide formulários, trate erros explicitamente e confirme exclusões.
 - Use indicadores visuais de status acessíveis e feedback após operações.
 - Para mudanças de banco, crie migrations SQL e mantenha RLS no Supabase.

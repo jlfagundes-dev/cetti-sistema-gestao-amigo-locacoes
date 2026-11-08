@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type View = "dashboard" | "clientes" | "equipamentos" | "orcamentos" | "locacoes" | "financeiro";
+type View = "dashboard" | "clientes" | "equipamentos" | "orcamentos" | "locacoes" | "financeiro" | "recolhimentos";
 
 type Address = {
   street: string;
@@ -97,6 +97,15 @@ type Payment = {
   notes: string;
 };
 
+type CollectionStatus = "Pendente" | "Realizado" | "Renovação solicitada" | "Cliente não encontrado";
+
+type CollectionTask = {
+  id: string;
+  contractId: string;
+  status: CollectionStatus;
+  updatedAt?: string;
+};
+
 const initialEquipment: Equipment[] = [
   {
     id: "martelete-10",
@@ -147,6 +156,7 @@ const navigation: { id: View; label: string; icon: string }[] = [
   { id: "orcamentos", label: "Orçamentos", icon: "▤" },
   { id: "locacoes", label: "Locações", icon: "↗" },
   { id: "financeiro", label: "Financeiro", icon: "R$" },
+  { id: "recolhimentos", label: "Recolhimentos", icon: "⌖" },
 ];
 
 function priceFor(equipment: Equipment, days: number) {
@@ -186,6 +196,7 @@ export default function Home() {
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [collectionTasks, setCollectionTasks] = useState<CollectionTask[]>([]);
   const [showCustomerForm, setShowCustomerForm] = useState(false);
   const [notice, setNotice] = useState("");
 
@@ -196,6 +207,7 @@ export default function Home() {
       setQuotes(readStorage<Quote[]>("amigo-quotes", []));
       setContracts(readStorage<Contract[]>("amigo-contracts", []));
       setPayments(readStorage<Payment[]>("amigo-payments", []));
+      setCollectionTasks(readStorage<CollectionTask[]>("amigo-collection-tasks", []));
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -207,8 +219,9 @@ export default function Home() {
       window.localStorage.setItem("amigo-quotes", JSON.stringify(quotes));
       window.localStorage.setItem("amigo-contracts", JSON.stringify(contracts));
       window.localStorage.setItem("amigo-payments", JSON.stringify(payments));
+      window.localStorage.setItem("amigo-collection-tasks", JSON.stringify(collectionTasks));
     }
-  }, [customers, equipment, quotes, contracts, payments]);
+  }, [customers, equipment, quotes, contracts, payments, collectionTasks]);
 
   const activeEquipment = useMemo(
     () => equipment.filter((item) => item.active).length,
@@ -309,11 +322,6 @@ export default function Home() {
             </button>
           ))}
           <small className="nav-section">OPERAÇÃO</small>
-          <button className="nav-item nav-item-muted" onClick={() => setNotice("O módulo de recolhimentos será desenvolvido na Fase 4.")}>
-            <span className="nav-icon">⌖</span>
-            Recolhimentos
-            <span className="soon">breve</span>
-          </button>
         </nav>
         <div className="sidebar-footer">
           <div className="config-icon">⚙</div>
@@ -347,6 +355,7 @@ export default function Home() {
           {view === "orcamentos" && <Quotes customers={customers} equipment={equipment} quotes={quotes} onSave={saveQuote} onNotice={setNotice} onConvert={convertQuote} />}
           {view === "locacoes" && <Contracts customers={customers} equipment={equipment} contracts={contracts} setContracts={setContracts} onNotice={setNotice} />}
           {view === "financeiro" && <Finance customers={customers} contracts={contracts} payments={payments} setPayments={setPayments} onNotice={setNotice} />}
+          {view === "recolhimentos" && <Collections customers={customers} equipment={equipment} contracts={contracts} payments={payments} tasks={collectionTasks} setTasks={setCollectionTasks} onNotice={setNotice} />}
         </div>
       </main>
     </div>
@@ -523,6 +532,46 @@ function Finance({ customers, contracts, payments, setPayments, onNotice }: { cu
   }
 
   return <section><div className="section-heading"><div><p className="eyebrow">CONTROLE FINANCEIRO</p><h1>Financeiro</h1><p>Registre valores devidos, recebimentos e pagamentos parciais.</p></div><button className="primary-button" onClick={() => setShowForm(!showForm)}><span>+</span> Novo lançamento</button></div><div className="finance-metrics"><div className="finance-metric"><span>Total recebido</span><strong>{money(received)}</strong></div><div className="finance-metric"><span>Total pendente</span><strong>{money(pending)}</strong></div><div className="finance-metric"><span>Lançamentos</span><strong>{payments.length}</strong></div></div>{showForm && <form className="form-card" onSubmit={savePayment}><div className="form-heading"><h2>Novo lançamento</h2><button type="button" className="close-form" onClick={() => setShowForm(false)}>×</button></div><div className="form-grid"><label>Locação<select required name="contractId"><option value="">Selecione uma locação</option>{contracts.map((contract) => <option value={contract.id} key={contract.id}>{contract.number} - {customers.find((item) => item.id === contract.customerId)?.name}</option>)}</select></label><label>Descrição<input required name="description" defaultValue="Pagamento da locação" /></label><label>Valor devido<input required name="dueAmount" type="number" min="0" step="0.01" /></label><label>Valor recebido<input required name="receivedAmount" type="number" min="0" step="0.01" defaultValue="0" /></label><label>Vencimento<input required name="dueDate" type="date" /></label><label>Data do pagamento<input name="paymentDate" type="date" /></label><label>Forma de pagamento<select name="method"><option>PIX</option><option>Dinheiro</option><option>Transferência</option><option>Outros</option></select></label><label>Observações<input name="notes" /></label></div><div className="form-actions"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancelar</button><button className="primary-button">Salvar lançamento</button></div></form>}{payments.length === 0 ? <div className="panel"><div className="empty-state"><div className="empty-icon soft">R$</div><strong>Nenhum lançamento financeiro</strong><p>Registre o primeiro pagamento de uma locação.</p></div></div> : <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>CLIENTE</th><th>DESCRIÇÃO</th><th>DEVIDO</th><th>RECEBIDO</th><th>STATUS</th></tr></thead><tbody>{payments.map((payment) => { const customer = customers.find((item) => item.id === payment.customerId); const status = payment.receivedAmount >= payment.dueAmount ? "Pago" : payment.receivedAmount > 0 ? "Pago parcialmente" : new Date(payment.dueDate) < new Date() ? "Atrasado" : "Pendente"; return <tr key={payment.id}><td><strong>{customer?.name ?? "Cliente"}</strong></td><td>{payment.description}</td><td>{money(payment.dueAmount)}</td><td>{money(payment.receivedAmount)}</td><td><span className={`quote-status ${status === "Pago" ? "paid-status" : ""}`}>{status}</span></td></tr>; })}</tbody></table></div></div>}</section>;
+}
+
+function Collections({ customers, equipment, contracts, payments, tasks, setTasks, onNotice }: { customers: Customer[]; equipment: Equipment[]; contracts: Contract[]; payments: Payment[]; tasks: CollectionTask[]; setTasks: (items: CollectionTask[]) => void; onNotice: (message: string) => void }) {
+  const [filter, setFilter] = useState<"today" | "tomorrow" | "week" | "overdue" | "all" | "date">("today");
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dateValue = (date: string) => new Date(`${date}T00:00:00`);
+  const daysFromToday = (date: string) => Math.round((dateValue(date).getTime() - today.getTime()) / 86400000);
+  const matchesFilter = (date: string) => {
+    const difference = daysFromToday(date);
+    if (filter === "today") return difference === 0;
+    if (filter === "tomorrow") return difference === 1;
+    if (filter === "week") return difference >= 0 && difference <= 7;
+    if (filter === "overdue") return difference < 0;
+    if (filter === "date") return date === selectedDate;
+    return true;
+  };
+  const activeContracts = contracts.filter((contract) => contract.status !== "Encerrado" && contract.status !== "Cancelado" && matchesFilter(contract.dueDate));
+  const taskFor = (contractId: string) => tasks.find((task) => task.contractId === contractId)?.status ?? "Pendente";
+  const paymentFor = (contract: Contract) => payments.filter((payment) => payment.contractId === contract.id).reduce((sum, payment) => sum + payment.receivedAmount, 0) >= contract.total ? "Pago" : "Pendente";
+  const addressFor = (customer: Customer, contract: Contract) => customer.workAddresses?.[contract.workAddressIndex];
+  const addressQuery = (customer: Customer, contract: Contract) => {
+    const address = addressFor(customer, contract);
+    return address ? `${address.street}, ${address.number}, ${address.neighborhood}, ${address.city}` : "";
+  };
+  function updateTask(contractId: string, status: CollectionStatus) {
+    const existing = tasks.find((task) => task.contractId === contractId);
+    setTasks(existing ? tasks.map((task) => task.contractId === contractId ? { ...task, status, updatedAt: new Date().toISOString() } : task) : [...tasks, { id: crypto.randomUUID(), contractId, status, updatedAt: new Date().toISOString() }]);
+    onNotice(`Recolhimento marcado como: ${status}.`);
+  }
+  function whatsapp(customer: Customer, contract: Contract) {
+    const phone = customer.phone.replace(/\D/g, "");
+    if (!phone) {
+      onNotice("Este cliente não possui telefone cadastrado.");
+      return;
+    }
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(`Olá, ${customer.name}. Gostaríamos de confirmar o recolhimento dos equipamentos da locação ${contract.number}.`)}`, "_blank", "noopener,noreferrer");
+  }
+  return <section><div className="section-heading"><div><p className="eyebrow">ROTEIRO DE OPERAÇÃO</p><h1>Recolhimentos do dia</h1><p>Organize as entregas, recolhimentos e renovações nas obras.</p></div><span className="collection-count">{activeContracts.length} registro(s)</span></div><div className="collection-filters"><button className={filter === "today" ? "filter-active" : ""} onClick={() => setFilter("today")}>Hoje</button><button className={filter === "tomorrow" ? "filter-active" : ""} onClick={() => setFilter("tomorrow")}>Amanhã</button><button className={filter === "week" ? "filter-active" : ""} onClick={() => setFilter("week")}>Próximos 7 dias</button><button className={filter === "overdue" ? "filter-active" : ""} onClick={() => setFilter("overdue")}>Somente vencidos</button><button className={filter === "all" ? "filter-active" : ""} onClick={() => setFilter("all")}>Todos</button><label className={filter === "date" ? "filter-active" : ""}>Escolher data<input type="date" value={selectedDate} onChange={(event) => { setSelectedDate(event.target.value); setFilter("date"); }} /></label></div>{activeContracts.length === 0 ? <div className="panel"><div className="empty-state"><div className="empty-icon">✓</div><strong>Nenhum recolhimento neste filtro</strong><p>Altere o período ou consulte todos os contratos ativos.</p></div></div> : <div className="collection-list">{activeContracts.map((contract) => { const customer = customers.find((item) => item.id === contract.customerId); if (!customer) return null; const address = addressFor(customer, contract); const taskStatus = taskFor(contract.id); const paymentStatus = paymentFor(contract); const overdue = daysFromToday(contract.dueDate) < 0; const mapUrl = address?.locationUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressQuery(customer, contract))}`; return <article className={`collection-card collection-${taskStatus.toLowerCase().replaceAll(" ", "-")}`} key={contract.id}><div className="collection-main"><div className={`collection-dot ${paymentStatus === "Pago" ? "dot-green" : overdue ? "dot-red" : contract.status === "Renovado" ? "dot-blue" : "dot-yellow"}`} /><div className="collection-info"><div className="collection-title"><h2>{customer.name}</h2><span className="quote-status">{taskStatus}</span></div><p className="collection-address">{address ? `${address.street}, ${address.number} - ${address.neighborhood}, ${address.city}` : "Endereço da obra não informado"}</p><p className="collection-equipment">{contract.items.map((item) => `${item.quantity}x ${equipment.find((entry) => entry.id === item.equipmentId)?.name ?? "Equipamento"}`).join(" · ")}</p></div><div className="collection-due"><span>VENCIMENTO</span><strong>{new Date(`${contract.dueDate}T12:00:00`).toLocaleDateString("pt-BR")}</strong><small>{paymentStatus === "Pago" ? "Pagamento realizado" : "Pagamento pendente"}</small></div></div><div className="collection-actions"><a className="secondary-button" href={mapUrl} target="_blank" rel="noopener noreferrer">Abrir Maps</a><a className="secondary-button" href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addressQuery(customer, contract))}`} target="_blank" rel="noopener noreferrer">Navegar</a><button className="secondary-button" onClick={() => whatsapp(customer, contract)}>WhatsApp</button><select value={taskStatus} onChange={(event) => updateTask(contract.id, event.target.value as CollectionStatus)}><option>Pendente</option><option>Realizado</option><option>Renovação solicitada</option><option>Cliente não encontrado</option></select></div></article>; })}</div>}</section>;
 }
 
 function EquipmentList({ equipment, setEquipment, onNotice }: { equipment: Equipment[]; setEquipment: (items: Equipment[]) => void; onNotice: (message: string) => void }) {

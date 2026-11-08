@@ -12,6 +12,7 @@ A aplicação contém as bases das **Fases 1, 2 e 3 do MVP**:
 - Criação de orçamentos com múltiplos equipamentos, cálculo automático, desconto, status e impressão para PDF.
 - Conversão de orçamentos em locações, renovações com histórico e controle financeiro local.
 - Renovações calculadas por novo ciclo, usando a faixa de preço do período adicional sem recalcular o ciclo anterior.
+- Tela de recolhimentos com filtros, status da coleta, Maps, navegação e WhatsApp.
 - Navegação responsiva para desktop e celular.
 - Diretrizes do projeto em [`.github/copilot-instructions.md`](./.github/copilot-instructions.md).
 
