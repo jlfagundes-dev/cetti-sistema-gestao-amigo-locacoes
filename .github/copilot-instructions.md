@@ -1,0 +1,28 @@
+# Diretrizes do projeto
+
+## Objetivo
+
+Aplicação web mobile-first para gestão da Amigo Locações de equipamentos para construção civil. A interface deve ser simples para usuários não técnicos, com poucos cliques e feedback claro.
+
+## Arquitetura
+
+- Use Next.js com React, TypeScript e Tailwind CSS.
+- Separe componentes de interface, regras de negócio, serviços, integrações e acesso a dados.
+- Mantenha integrações com Supabase, Autentique e WhatsApp atrás de serviços próprios.
+- Nunca exponha chaves privadas no navegador.
+- Toda operação persistente deve usar o banco; não trate dados fictícios como dados reais.
+
+## Regras de negócio
+
+- Preços devem ser configuráveis e calculados por um serviço centralizado, nunca fixados nos componentes.
+- Preserve histórico de clientes, locações, pagamentos e renovações; não sobrescreva contratos anteriores.
+- Renovações podem alterar o período original ou iniciar um novo ciclo, com diferença e histórico explícitos.
+- Use os status e condições comerciais definidos no escopo do projeto.
+
+## Experiência e qualidade
+
+- Priorize telas de operação em celular, especialmente recolhimentos.
+- Valide formulários, trate erros explicitamente e confirme exclusões.
+- Use indicadores visuais de status acessíveis e feedback após operações.
+- Para mudanças de banco, crie migrations SQL e mantenha RLS no Supabase.
+- Ao concluir uma fase, documente arquivos, como testar, configurações externas e pendências no README.
