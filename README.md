@@ -4,15 +4,16 @@ Sistema mobile-first para gestão de locações de equipamentos da Amigo Locaç�
 
 ## Status
 
-A aplicação contém a base da **Fase 1 do MVP**:
+A aplicação contém as bases das **Fases 1 e 2 do MVP**:
 
 - Dashboard operacional com indicadores e estados vazios.
 - Cadastro local de clientes com endereço completo do cliente, múltiplos endereços de obra e link de localização copiado do WhatsApp para abrir no Maps (persistência temporária no navegador).
 - Catálogo inicial de equipamentos e regras de preço configuráveis.
+- Criação de orçamentos com múltiplos equipamentos, cálculo automático, desconto, status e impressão para PDF.
 - Navegação responsiva para desktop e celular.
 - Diretrizes do projeto em [`.github/copilot-instructions.md`](./.github/copilot-instructions.md).
 
-O modo local é identificado na interface e não substitui o banco de produção. A próxima etapa deve conectar Supabase Auth, PostgreSQL, Storage e RLS antes do uso real.
+O modo local é identificado na interface e será mantido durante todas as fases do MVP. A integração com Supabase Auth, PostgreSQL, Storage e RLS será feita somente depois da conclusão dos módulos.
 
 ## Executar
 
