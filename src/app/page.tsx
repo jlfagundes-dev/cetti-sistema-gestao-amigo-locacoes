@@ -33,8 +33,16 @@ type Equipment = {
   name: string;
   category: string;
   billing: string;
+  billingMode?: string;
   active: boolean;
   rules: string;
+  pricing?: PriceRule[];
+};
+
+type PriceRule = {
+  minDays: number;
+  maxDays?: number;
+  amount: number;
 };
 
 type QuoteItem = {
@@ -114,6 +122,7 @@ const initialEquipment: Equipment[] = [
     name: "Martelete 10 kg",
     category: "Martelete",
     billing: "Diária",
+    pricing: [{ minDays: 1, amount: 100 }],
     active: true,
     rules: "R$ 100,00 por dia",
   },
@@ -122,6 +131,7 @@ const initialEquipment: Equipment[] = [
     name: "Martelete 15 kg",
     category: "Martelete",
     billing: "Diária",
+    pricing: [{ minDays: 1, amount: 150 }],
     active: true,
     rules: "R$ 150,00 por dia",
   },
@@ -130,6 +140,7 @@ const initialEquipment: Equipment[] = [
     name: "Compactador / Vibrador",
     category: "Compactação",
     billing: "Diária",
+    pricing: [{ minDays: 1, amount: 80 }],
     active: true,
     rules: "R$ 80,00 por dia",
   },
@@ -138,6 +149,7 @@ const initialEquipment: Equipment[] = [
     name: "Betoneira",
     category: "Mistura",
     billing: "Por período",
+    pricing: [{ minDays: 1, maxDays: 1, amount: 100 }, { minDays: 2, maxDays: 7, amount: 200 }, { minDays: 8, maxDays: 15, amount: 300 }, { minDays: 16, amount: 400 }],
     active: true,
     rules: "1d: R$ 100,00 · 2–7d: R$ 200,00 · 8–15d: R$ 300,00",
   },
@@ -146,6 +158,7 @@ const initialEquipment: Equipment[] = [
     name: "Andaime",
     category: "Acesso",
     billing: "Por período",
+    pricing: [{ minDays: 1, maxDays: 7, amount: 6 }, { minDays: 8, maxDays: 15, amount: 9 }, { minDays: 16, amount: 15 }],
     active: true,
     rules: "1–7d: R$ 6,00 · 8–15d: R$ 9,00 · 16–31d: R$ 15,00",
   },
@@ -162,6 +175,10 @@ const navigation: { id: View; label: string; icon: string }[] = [
 ];
 
 function priceFor(equipment: Equipment, days: number) {
+  if (equipment.pricing?.length) {
+    const rule = equipment.pricing.find((item) => days >= item.minDays && (item.maxDays === undefined || days <= item.maxDays));
+    if (rule) return equipment.billingMode === "daily" ? rule.amount * days : rule.amount;
+  }
   if (equipment.id === "martelete-10") return 100 * days;
   if (equipment.id === "martelete-15") return 150 * days;
   if (equipment.id === "compactador") return 80 * days;
@@ -207,6 +224,24 @@ function customerFromRemoteRow(row: { id: string; name: string; document: string
     city: row.customer_address?.city ?? "",
     address: row.customer_address,
     workAddresses: addresses.map((item) => item.address),
+  };
+}
+
+function equipmentFromRemoteRow(row: { id: string; name: string; category: string; billing_unit: string; billing_mode: string; active: boolean; equipment_price_rules: { min_days: number; max_days: number | null; amount: number }[] }): Equipment {
+  const pricing = row.equipment_price_rules.map((rule) => ({
+    minDays: rule.min_days,
+    ...(rule.max_days === null ? {} : { maxDays: rule.max_days }),
+    amount: Number(rule.amount),
+  }));
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    billing: row.billing_unit,
+    billingMode: row.billing_mode,
+    active: row.active,
+    rules: pricing.map((rule) => `${rule.minDays}${rule.maxDays ? `-${rule.maxDays}` : "+"}d: ${money(rule.amount)}`).join(" · "),
+    pricing,
   };
 }
 
@@ -265,6 +300,28 @@ export default function Home() {
       setCustomers(remoteCustomers);
     }
     void loadRemoteCustomers();
+    return () => {
+      active = false;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (!supabase || !session) return;
+    const client = supabase;
+    let active = true;
+    async function loadRemoteEquipment() {
+      const { data, error } = await client
+        .from("equipment")
+        .select("id,name,category,billing_unit,billing_mode,active,equipment_price_rules(min_days,max_days,amount)")
+        .order("created_at", { ascending: true });
+      if (!active) return;
+      if (error) {
+        setNotice(`Supabase indisponível para equipamentos. Continuando no modo local: ${error.message}`);
+        return;
+      }
+      if (data?.length) setEquipment(data.map((row) => equipmentFromRemoteRow(row)));
+    }
+    void loadRemoteEquipment();
     return () => {
       active = false;
     };
@@ -473,7 +530,7 @@ export default function Home() {
               onSubmit={saveCustomer}
             />
           )}
-          {view === "equipamentos" && <EquipmentList equipment={equipment} setEquipment={setEquipment} onNotice={setNotice} />}
+          {view === "equipamentos" && <EquipmentList equipment={equipment} setEquipment={setEquipment} session={session} onNotice={setNotice} />}
           {view === "orcamentos" && <Quotes customers={customers} equipment={equipment} quotes={quotes} onSave={saveQuote} onNotice={setNotice} onConvert={convertQuote} />}
           {view === "locacoes" && <Contracts customers={customers} equipment={equipment} contracts={contracts} setContracts={setContracts} payments={payments} setPayments={setPayments} onNotice={setNotice} />}
           {view === "financeiro" && <Finance customers={customers} contracts={contracts} payments={payments} setPayments={setPayments} onNotice={setNotice} />}
@@ -748,7 +805,70 @@ function Collections({ customers, equipment, contracts, payments, tasks, setTask
   return <section><div className="section-heading"><div><p className="eyebrow">ROTEIRO DE OPERAÇÃO</p><h1>Recolhimentos do dia</h1><p>Organize as entregas, recolhimentos e renovações nas obras.</p></div><span className="collection-count">{activeContracts.length} registro(s)</span></div><div className="collection-filters"><button className={filter === "today" ? "filter-active" : ""} onClick={() => setFilter("today")}>Hoje</button><button className={filter === "tomorrow" ? "filter-active" : ""} onClick={() => setFilter("tomorrow")}>Amanhã</button><button className={filter === "week" ? "filter-active" : ""} onClick={() => setFilter("week")}>Próximos 7 dias</button><button className={filter === "overdue" ? "filter-active" : ""} onClick={() => setFilter("overdue")}>Somente vencidos</button><button className={filter === "all" ? "filter-active" : ""} onClick={() => setFilter("all")}>Todos</button><label className={filter === "date" ? "filter-active" : ""}>Escolher data<input type="date" value={selectedDate} onChange={(event) => { setSelectedDate(event.target.value); setFilter("date"); }} /></label></div>{activeContracts.length === 0 ? <div className="panel"><div className="empty-state"><div className="empty-icon">✓</div><strong>Nenhum recolhimento neste filtro</strong><p>Altere o período ou consulte todos os contratos ativos.</p></div></div> : <div className="collection-list">{activeContracts.map((contract) => { const customer = customers.find((item) => item.id === contract.customerId); if (!customer) return null; const address = addressFor(customer, contract); const taskStatus = taskFor(contract.id); const paymentStatus = paymentFor(contract); const overdue = daysFromToday(contract.dueDate) < 0; const mapUrl = address?.locationUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressQuery(customer, contract))}`; return <article className={`collection-card collection-${taskStatus.toLowerCase().replaceAll(" ", "-")}`} key={contract.id}><div className="collection-main"><div className={`collection-dot ${paymentStatus === "Pago" ? "dot-green" : overdue ? "dot-red" : contract.status === "Renovado" ? "dot-blue" : "dot-yellow"}`} /><div className="collection-info"><div className="collection-title"><h2>{customer.name}</h2><span className="quote-status">{taskStatus}</span></div><p className="collection-address">{address ? `${address.street}, ${address.number} - ${address.neighborhood}, ${address.city}` : "Endereço da obra não informado"}</p><p className="collection-equipment">{contract.items.map((item) => `${item.quantity}x ${equipment.find((entry) => entry.id === item.equipmentId)?.name ?? "Equipamento"}`).join(" · ")}</p></div><div className="collection-due"><span>VENCIMENTO</span><strong>{new Date(`${contract.dueDate}T12:00:00`).toLocaleDateString("pt-BR")}</strong><small>{paymentStatus === "Pago" ? "Pagamento realizado" : "Pagamento pendente"}</small></div></div><div className="collection-actions"><a className="secondary-button" href={mapUrl} target="_blank" rel="noopener noreferrer">Abrir Maps</a><a className="secondary-button" href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addressQuery(customer, contract))}`} target="_blank" rel="noopener noreferrer">Navegar</a><button className="secondary-button" onClick={() => whatsapp(customer, contract)}>WhatsApp</button><select value={taskStatus} onChange={(event) => updateTask(contract.id, event.target.value as CollectionStatus)}><option>Pendente</option><option>Realizado</option><option>Renovação solicitada</option><option>Cliente não encontrado</option></select></div></article>; })}</div>}</section>;
 }
 
-function EquipmentList({ equipment, setEquipment, onNotice }: { equipment: Equipment[]; setEquipment: (items: Equipment[]) => void; onNotice: (message: string) => void }) {
-  function toggle(id: string) { setEquipment(equipment.map((item) => item.id === id ? { ...item, active: !item.active } : item)); }
-  return <section><div className="section-heading"><div><p className="eyebrow">CATÁLOGO E PREÇOS</p><h1>Equipamentos</h1><p>Configure os equipamentos e as regras de cobrança da empresa.</p></div><button className="primary-button" onClick={() => onNotice("O cadastro de novos equipamentos será conectado ao Supabase na próxima etapa.")}><span>+</span> Novo equipamento</button></div><div className="equipment-grid">{equipment.map((item) => <article className={`equipment-card ${!item.active ? "inactive" : ""}`} key={item.id}><div className="equipment-top"><div className="equipment-symbol">▣</div><button className={`status-pill ${item.active ? "status-active" : "status-inactive"}`} onClick={() => toggle(item.id)}>{item.active ? "Ativo" : "Inativo"}</button></div><p className="equipment-category">{item.category}</p><h2>{item.name}</h2><p className="equipment-billing">Cobrança: <strong>{item.billing}</strong></p><div className="price-rule"><span>Regra de preço</span><strong>{item.rules}</strong></div></article>)}</div></section>;
+function EquipmentList({ equipment, setEquipment, session, onNotice }: { equipment: Equipment[]; setEquipment: (items: Equipment[]) => void; session: Session | null; onNotice: (message: string) => void }) {
+  const [showForm, setShowForm] = useState(false);
+
+  async function toggle(id: string) {
+    const item = equipment.find((entry) => entry.id === id);
+    if (!item) return;
+    const active = !item.active;
+    if (supabase && session) {
+      const { error } = await supabase.from("equipment").update({ active }).eq("id", id);
+      if (error) {
+        onNotice(`Não foi possível atualizar o equipamento: ${error.message}`);
+        return;
+      }
+    }
+    setEquipment(equipment.map((entry) => entry.id === id ? { ...entry, active } : entry));
+  }
+
+  async function saveEquipment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const name = String(data.get("name") ?? "").trim();
+    const category = String(data.get("category") ?? "").trim();
+    const billing = String(data.get("billing") ?? "Diária");
+    const billingMode = String(data.get("billingMode") ?? "daily");
+    const amount = Number(data.get("amount") ?? 0);
+    const minDays = Number(data.get("minDays") ?? 1);
+    const maxDaysValue = String(data.get("maxDays") ?? "").trim();
+    const maxDays = maxDaysValue ? Number(maxDaysValue) : undefined;
+    if (!name || !category || !Number.isFinite(amount) || amount < 0 || !Number.isInteger(minDays) || minDays < 1 || (maxDays !== undefined && (!Number.isInteger(maxDays) || maxDays < minDays))) {
+      onNotice("Informe os dados do equipamento e uma regra de preço válida.");
+      return;
+    }
+    const pricing = [{ minDays, ...(maxDays === undefined ? {} : { maxDays }), amount }];
+    const rules = `${minDays}${maxDays === undefined ? "+" : `-${maxDays}`}d: ${money(amount)}`;
+    if (supabase && session) {
+      const { data: saved, error } = await supabase
+        .from("equipment")
+        .insert({ name, category, billing_unit: billing, billing_mode: billingMode, active: true })
+        .select("id,name,category,billing_unit,billing_mode,active")
+        .single();
+      if (error || !saved) {
+        onNotice(`Não foi possível salvar o equipamento no Supabase: ${error?.message ?? "resposta vazia"}`);
+        return;
+      }
+      const { error: ruleError } = await supabase.from("equipment_price_rules").insert({
+        equipment_id: saved.id,
+        min_days: minDays,
+        max_days: maxDays ?? null,
+        amount,
+      });
+      if (ruleError) {
+        await supabase.from("equipment").delete().eq("id", saved.id);
+        onNotice(`Não foi possível salvar a regra de preço: ${ruleError.message}`);
+        return;
+      }
+      setEquipment([...equipment, { id: saved.id, name: saved.name, category: saved.category, billing: saved.billing_unit, billingMode: saved.billing_mode, active: saved.active, rules, pricing }]);
+    } else {
+      setEquipment([...equipment, { id: crypto.randomUUID(), name, category, billing, billingMode, active: true, rules, pricing }]);
+    }
+    form.reset();
+    setShowForm(false);
+    onNotice("Equipamento cadastrado com sucesso.");
+  }
+
+  return <section><div className="section-heading"><div><p className="eyebrow">CATÁLOGO E PREÇOS</p><h1>Equipamentos</h1><p>Configure os equipamentos e as regras de cobrança da empresa.</p></div><button className="primary-button" onClick={() => setShowForm(!showForm)}><span>+</span> Novo equipamento</button></div>{showForm && <form className="form-card" onSubmit={saveEquipment}><div className="form-heading"><div><h2>Novo equipamento</h2><p className="form-description">A primeira regra de preço será salva junto com o equipamento.</p></div><button type="button" className="close-form" onClick={() => setShowForm(false)}>×</button></div><div className="form-grid"><label>Nome<input required name="name" /></label><label>Categoria<input required name="category" /></label><label>Unidade de cobrança<input required name="billing" defaultValue="Diária" /></label><label>Modo<select name="billingMode" defaultValue="daily"><option value="daily">Por diária</option><option value="period">Por período</option></select></label><label>Início da faixa (dias)<input required name="minDays" type="number" min="1" defaultValue="1" /></label><label>Fim da faixa (dias)<input name="maxDays" type="number" min="1" placeholder="Sem limite" /></label><label>Valor da faixa<input required name="amount" type="number" min="0" step="0.01" /></label></div><div className="form-actions"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancelar</button><button className="primary-button">Salvar equipamento</button></div></form>}<div className="equipment-grid">{equipment.map((item) => <article className={`equipment-card ${!item.active ? "inactive" : ""}`} key={item.id}><div className="equipment-top"><div className="equipment-symbol">▣</div><button className={`status-pill ${item.active ? "status-active" : "status-inactive"}`} onClick={() => void toggle(item.id)}>{item.active ? "Ativo" : "Inativo"}</button></div><p className="equipment-category">{item.category}</p><h2>{item.name}</h2><p className="equipment-billing">Cobrança: <strong>{item.billing}</strong></p><div className="price-rule"><span>Regra de preço</span><strong>{item.rules}</strong></div></article>)}</div></section>;
 }

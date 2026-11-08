@@ -8,7 +8,7 @@ A aplicação contém as bases das **Fases 1, 2, 3 e 4 do MVP**, com a autentica
 
 - Dashboard operacional com indicadores e estados vazios.
 - Cadastro de clientes com endereço completo, múltiplos endereços de obra e link de localização copiado do WhatsApp para abrir no Maps. Com Supabase configurado, clientes e endereços de obra são persistidos no banco; sem conexão, o cadastro usa o armazenamento local como fallback.
-- Catálogo inicial de equipamentos e regras de preço configuráveis.
+- Catálogo de equipamentos e regras de preço configuráveis. Com Supabase configurado, equipamentos, regras e status ativo são persistidos no banco; sem conexão, o catálogo usa o armazenamento local como fallback.
 - Criação de orçamentos com múltiplos equipamentos, cálculo automático, desconto, status e impressão para PDF.
 - Conversão de orçamentos em locações, renovações com histórico e controle financeiro local.
 - Renovações calculadas por novo ciclo, usando a faixa de preço do período adicional sem recalcular o ciclo anterior.
@@ -23,7 +23,7 @@ Os módulos que ainda não foram migrados continuam usando `localStorage`. A mig
 
 O cliente oficial e a primeira migration já estão preparados em [`supabase/migrations`](./supabase/migrations). O arquivo `.env.local` contém somente a URL e a chave pública do projeto e permanece ignorado pelo Git.
 
-As tabelas da migration usam RLS e liberam acesso apenas para usuários autenticados. A aplicação exige login quando o Supabase está configurado; clientes e seus endereços já são carregados e salvos nas tabelas `customers` e `customer_addresses`.
+As tabelas da migration usam RLS e liberam acesso apenas para usuários autenticados. A aplicação exige login quando o Supabase está configurado; clientes e seus endereços são carregados e salvos nas tabelas `customers` e `customer_addresses`, e equipamentos e regras nas tabelas `equipment` e `equipment_price_rules`.
 
 Depois de aplicar a migration no projeto Supabase, crie o primeiro usuário em **Authentication > Users**. Não publique a senha do banco nem qualquer chave `service_role`/`secret`.
 
