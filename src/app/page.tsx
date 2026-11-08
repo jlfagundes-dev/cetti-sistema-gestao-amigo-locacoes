@@ -110,13 +110,12 @@ const navigation: { id: View; label: string; icon: string }[] = [
 ];
 
 function priceFor(equipment: Equipment, days: number) {
-  const prices = equipment.rules.match(/\d+(?:[.,]\d{2})?/g)?.map((value) => Number(value.replace(",", "."))) ?? [];
   if (equipment.id === "martelete-10") return 100 * days;
   if (equipment.id === "martelete-15") return 150 * days;
   if (equipment.id === "compactador") return 80 * days;
-  if (equipment.id === "betoneira") return prices[days <= 1 ? 0 : days <= 7 ? 1 : days <= 15 ? 2 : 3] ?? 100;
-  if (equipment.id === "andaime") return prices[days <= 7 ? 0 : days <= 15 ? 1 : 2] ?? 6;
-  return prices[0] ?? 0;
+  if (equipment.id === "betoneira") return [100, 200, 300, 400][days <= 1 ? 0 : days <= 7 ? 1 : days <= 15 ? 2 : 3];
+  if (equipment.id === "andaime") return [6, 9, 15][days <= 7 ? 0 : days <= 15 ? 1 : 2];
+  return 0;
 }
 
 function money(value: number) {
