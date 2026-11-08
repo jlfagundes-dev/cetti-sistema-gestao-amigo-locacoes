@@ -1067,7 +1067,10 @@ function Finance({ customers, contracts, payments, setPayments, session, onNotic
   const [receivedAmount, setReceivedAmount] = useState(0);
   const [paymentDate, setPaymentDate] = useState(localDate());
   const selectedContract = contracts.find((contract) => contract.id === selectedContractId);
-  const selectedCharge = payments.find((payment) => payment.contractId === selectedContractId && payment.receivedAmount < payment.dueAmount);
+  const selectedCharges = payments
+    .filter((payment) => payment.contractId === selectedContractId && payment.receivedAmount < payment.dueAmount)
+    .sort((left, right) => left.dueDate.localeCompare(right.dueDate));
+  const selectedCharge = selectedCharges[0];
   const received = payments.reduce((sum, item) => sum + item.receivedAmount, 0);
   const pending = payments.reduce((sum, item) => sum + Math.max(0, item.dueAmount - item.receivedAmount), 0);
 
@@ -1076,51 +1079,56 @@ function Finance({ customers, contracts, payments, setPayments, session, onNotic
     const data = new FormData(event.currentTarget);
     const contract = contracts.find((item) => item.id === selectedContractId);
     if (!contract) { onNotice("Selecione uma locação válida."); return; }
-    const updatedPayment: Payment = {
-      id: selectedCharge?.id ?? crypto.randomUUID(),
-      contractId: contract.id,
-      customerId: contract.customerId,
-      description: selectedCharge?.description ?? String(data.get("description") ?? "Locação"),
-      dueAmount: selectedCharge?.dueAmount ?? contract.total,
-      receivedAmount: selectedCharge ? Math.min(selectedCharge.dueAmount, selectedCharge.receivedAmount + receivedAmount) : receivedAmount,
-      dueDate: selectedCharge?.dueDate ?? contract.dueDate,
-      paymentDate,
-      method: String(data.get("method") ?? "PIX") as Payment["method"],
-      notes: String(data.get("notes") ?? ""),
-    };
+    const paymentMethod = String(data.get("method") ?? "PIX") as Payment["method"];
+    const notes = String(data.get("notes") ?? "");
+    const totalRemaining = selectedCharges.reduce((sum, payment) => sum + Math.max(0, payment.dueAmount - payment.receivedAmount), 0);
+    if (receivedAmount > totalRemaining) {
+      onNotice(`O recebimento não pode ser maior que o saldo pendente de ${money(totalRemaining)}.`);
+      return;
+    }
+    const amountToApply = Math.max(0, receivedAmount);
+    if (amountToApply <= 0 || selectedCharges.length === 0) {
+      onNotice("Não há saldo pendente para esta locação.");
+      return;
+    }
+    let remainingToApply = amountToApply;
+    const allocations = new Map<string, number>();
+    for (const payment of selectedCharges) {
+      if (remainingToApply <= 0) break;
+      const allocation = Math.min(Math.max(0, payment.dueAmount - payment.receivedAmount), remainingToApply);
+      allocations.set(payment.id, allocation);
+      remainingToApply -= allocation;
+    }
+    const updatedPayments = payments.map((payment) => {
+      const allocation = allocations.get(payment.id) ?? 0;
+      if (allocation <= 0) return payment;
+      return {
+        ...payment,
+        receivedAmount: payment.receivedAmount + allocation,
+        paymentDate,
+        method: paymentMethod,
+        notes: notes || payment.notes,
+      };
+    });
     if (supabase && session) {
-      if (selectedCharge) {
+      const chargesToUpdate = updatedPayments.filter((payment, index) => payment.receivedAmount !== payments[index].receivedAmount);
+      const savedPayments: Payment[] = [];
+      for (const payment of chargesToUpdate) {
         const { data: savedPayment, error } = await supabase.from("payments").update({
-          received_amount: updatedPayment.receivedAmount,
-          payment_date: updatedPayment.paymentDate,
-          method: updatedPayment.method,
-          notes: updatedPayment.notes,
-        }).eq("id", selectedCharge.id).select("id,contract_id,customer_id,description,due_amount,received_amount,due_date,payment_date,method,notes").single();
+          received_amount: payment.receivedAmount,
+          payment_date: payment.paymentDate,
+          method: payment.method,
+          notes: payment.notes,
+        }).eq("id", payment.id).select("id,contract_id,customer_id,description,due_amount,received_amount,due_date,payment_date,method,notes").single();
         if (error || !savedPayment) {
           onNotice(`Não foi possível registrar o recebimento: ${error?.message ?? "resposta vazia"}`);
           return;
         }
-        setPayments(payments.map((item) => item.id === selectedCharge.id ? paymentFromRemoteRow(savedPayment) : item));
-      } else {
-        const { data: savedPayment, error } = await supabase.from("payments").insert({
-          contract_id: contract.id,
-          customer_id: contract.customerId,
-          description: updatedPayment.description,
-          due_amount: updatedPayment.dueAmount,
-          received_amount: updatedPayment.receivedAmount,
-          due_date: updatedPayment.dueDate,
-          payment_date: updatedPayment.paymentDate,
-          method: updatedPayment.method,
-          notes: updatedPayment.notes,
-        }).select("id,contract_id,customer_id,description,due_amount,received_amount,due_date,payment_date,method,notes").single();
-        if (error || !savedPayment) {
-          onNotice(`Não foi possível salvar o recebimento: ${error?.message ?? "resposta vazia"}`);
-          return;
-        }
-        setPayments([paymentFromRemoteRow(savedPayment), ...payments]);
+        savedPayments.push(paymentFromRemoteRow(savedPayment));
       }
+      setPayments(payments.map((payment) => savedPayments.find((saved) => saved.id === payment.id) ?? payment));
     } else {
-      setPayments(selectedCharge ? payments.map((item) => item.id === selectedCharge.id ? updatedPayment : item) : [updatedPayment, ...payments]);
+      setPayments(updatedPayments);
     }
     setShowForm(false);
     onNotice("Lançamento financeiro salvo.");
@@ -1130,7 +1138,7 @@ function Finance({ customers, contracts, payments, setPayments, session, onNotic
     setPaymentDate(localDate());
   }
 
-  const remaining = selectedCharge ? Math.max(0, selectedCharge.dueAmount - selectedCharge.receivedAmount) : selectedContract ? Math.max(0, selectedContract.total - payments.filter((payment) => payment.contractId === selectedContract.id).reduce((sum, payment) => sum + payment.receivedAmount, 0)) : 0;
+  const remaining = selectedCharges.reduce((sum, payment) => sum + Math.max(0, payment.dueAmount - payment.receivedAmount), 0);
   return <section><div className="section-heading"><div><p className="eyebrow">CONTROLE FINANCEIRO</p><h1>Financeiro</h1><p>As cobranças são geradas na locação; aqui você registra recebimentos parciais.</p></div><button className="primary-button" onClick={() => setShowForm(!showForm)}><span>+</span> Registrar recebimento</button></div><div className="finance-metrics"><div className="finance-metric"><span>Total recebido</span><strong>{money(received)}</strong></div><div className="finance-metric"><span>Total pendente</span><strong>{money(pending)}</strong></div><div className="finance-metric"><span>Lançamentos</span><strong>{payments.length}</strong></div></div>{showForm && <form className="form-card" onSubmit={savePayment}><div className="form-heading"><div><h2>Registrar recebimento</h2><p className="form-description">O valor devido e o vencimento vêm automaticamente da cobrança da locação.</p></div><button type="button" className="close-form" onClick={() => setShowForm(false)}>×</button></div><div className="form-grid"><label>Locação<select required name="contractId" value={selectedContractId} onChange={(event) => { setSelectedContractId(event.target.value); setReceivedAmount(0); }}><option value="">Selecione uma locação</option>{contracts.map((contract) => <option value={contract.id} key={contract.id}>{contract.number} - {customers.find((item) => item.id === contract.customerId)?.name}</option>)}</select></label><label>Descrição<input required name="description" defaultValue="Pagamento da locação" /></label><label>Valor devido<input required name="dueAmount" type="number" value={remaining} readOnly /></label><label>Valor recebido<input required name="receivedAmount" type="number" min="0" max={remaining} step="0.01" value={receivedAmount} onChange={(event) => setReceivedAmount(Number(event.target.value))} /><small className="field-help">Este é o saldo restante. Exemplo: uma cobrança de R$ 80,00 com R$ 40,00 recebidos mostrará R$ 40,00.</small></label><label>Vencimento<input required name="dueDate" type="date" value={selectedCharge?.dueDate ?? selectedContract?.dueDate ?? ""} readOnly /></label><label>Data do pagamento<input name="paymentDate" type="date" value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} /></label><label>Forma de pagamento<select name="method"><option>PIX</option><option>Dinheiro</option><option>Transferência</option><option>Outros</option></select></label><label>Observações<input name="notes" /></label></div><div className="form-actions"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancelar</button><button className="primary-button" disabled={!selectedCharge || remaining <= 0}>Salvar recebimento</button></div></form>}{payments.length === 0 ? <div className="panel"><div className="empty-state"><div className="empty-icon soft">R$</div><strong>Nenhum lançamento financeiro</strong><p>As cobranças são criadas automaticamente ao converter um orçamento em locação.</p></div></div> : <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>CLIENTE</th><th>DESCRIÇÃO</th><th>DEVIDO</th><th>RECEBIDO</th><th>VENCIMENTO</th><th>STATUS</th></tr></thead><tbody>{payments.map((payment) => { const customer = customers.find((item) => item.id === payment.customerId); const status = payment.receivedAmount >= payment.dueAmount ? "Pago" : payment.receivedAmount > 0 ? "Pago parcialmente" : new Date(`${payment.dueDate}T23:59:59`) < new Date() ? "Atrasado" : "Pendente"; return <tr key={payment.id}><td><strong>{customer?.name ?? "Cliente"}</strong></td><td>{payment.description}</td><td>{money(payment.dueAmount)}</td><td>{money(payment.receivedAmount)}</td><td>{new Date(`${payment.dueDate}T12:00:00`).toLocaleDateString("pt-BR")}</td><td><span className={`quote-status ${status === "Pago" ? "paid-status" : ""}`}>{status}</span></td></tr>; })}</tbody></table></div></div>}</section>;
 }
 
