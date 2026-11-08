@@ -1,6 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabase";
 
 type View = "dashboard" | "clientes" | "equipamentos" | "orcamentos" | "locacoes" | "financeiro" | "recolhimentos";
 
@@ -196,6 +198,9 @@ function readStorage<T>(key: string, fallback: T): T {
 }
 
 export default function Home() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState("");
   const [view, setView] = useState<View>("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -206,6 +211,28 @@ export default function Home() {
   const [collectionTasks, setCollectionTasks] = useState<CollectionTask[]>([]);
   const [showCustomerForm, setShowCustomerForm] = useState(false);
   const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    if (!supabase) {
+      const timer = window.setTimeout(() => setAuthLoading(false), 0);
+      return () => window.clearTimeout(timer);
+    }
+    let active = true;
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!active) return;
+      if (error) setAuthError(error.message);
+      setSession(data.session);
+      setAuthLoading(false);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthLoading(false);
+    });
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -234,6 +261,13 @@ export default function Home() {
     () => equipment.filter((item) => item.active).length,
     [equipment],
   );
+
+  function signOut() {
+    if (supabase) void supabase.auth.signOut();
+  }
+
+  if (authLoading) return <div className="auth-page"><div className="auth-card"><div className="brand-mark">A</div><h1>Amigo Locações</h1><p>Verificando seu acesso...</p></div></div>;
+  if (supabase && !session) return <Login authError={authError} onError={setAuthError} />;
 
   function navigate(nextView: View) {
     setView(nextView);
@@ -356,7 +390,8 @@ export default function Home() {
           <div className="topbar-actions">
             <button className="icon-button" aria-label="Notificações">♢<i /></button>
             <div className="user-avatar">JL</div>
-            <div className="user-info"><strong>Administrador</strong><span>Gestor</span></div>
+            <div className="user-info"><strong>{session?.user.email ?? "Modo local"}</strong><span>Administrador</span></div>
+            {supabase && session && <button className="logout-button" onClick={signOut}>Sair</button>}
           </div>
         </header>
 
@@ -380,6 +415,25 @@ export default function Home() {
       </main>
     </div>
   );
+}
+
+function Login({ authError, onError }: { authError: string; onError: (message: string) => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const client = supabase;
+    if (!client) return;
+    setLoading(true);
+    onError("");
+    const { error } = await client.auth.signInWithPassword({ email, password });
+    if (error) onError("E-mail ou senha inválidos.");
+    setLoading(false);
+  }
+
+  return <main className="auth-page"><form className="auth-card" onSubmit={submit}><div className="brand-mark">A</div><h1>Amigo Locações</h1><p className="auth-subtitle">Entre para acessar o sistema de gestão.</p><label>E-mail<input type="email" required autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="seu@email.com" /></label><label>Senha<input type="password" required autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Sua senha" /></label>{authError && <p className="auth-error" role="alert">{authError}</p>}<button className="primary-button" disabled={loading}>{loading ? "Entrando..." : "Entrar"}</button><small>Os dados continuam em modo local durante a migração dos módulos.</small></form></main>;
 }
 
 function pageTitle(view: View) {
