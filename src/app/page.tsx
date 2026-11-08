@@ -172,6 +172,13 @@ function money(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+function localDate(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function addDays(date: string, days: number) {
   const result = new Date(`${date}T12:00:00`);
   result.setDate(result.getDate() + days);
@@ -293,7 +300,20 @@ export default function Home() {
       renewals: [],
       createdAt: new Date().toISOString(),
     };
+    const openingPayment: Payment = {
+      id: crypto.randomUUID(),
+      contractId: contract.id,
+      customerId: contract.customerId,
+      description: `Cobrança inicial ${contract.number}`,
+      dueAmount: quote.total,
+      receivedAmount: 0,
+      dueDate: contract.dueDate,
+      paymentDate: localDate(),
+      method: "PIX",
+      notes: "Gerado automaticamente ao converter o orçamento em locação.",
+    };
     setContracts((current) => [contract, ...current]);
+    setPayments((current) => [openingPayment, ...current]);
     setQuotes((current) => current.map((item) => item.id === quote.id ? { ...item, status: "Assinado" } : item));
     setNotice(`Contrato ${contract.number} criado com sucesso.`);
   }
@@ -353,7 +373,7 @@ export default function Home() {
           )}
           {view === "equipamentos" && <EquipmentList equipment={equipment} setEquipment={setEquipment} onNotice={setNotice} />}
           {view === "orcamentos" && <Quotes customers={customers} equipment={equipment} quotes={quotes} onSave={saveQuote} onNotice={setNotice} onConvert={convertQuote} />}
-          {view === "locacoes" && <Contracts customers={customers} equipment={equipment} contracts={contracts} setContracts={setContracts} onNotice={setNotice} />}
+          {view === "locacoes" && <Contracts customers={customers} equipment={equipment} contracts={contracts} setContracts={setContracts} payments={payments} setPayments={setPayments} onNotice={setNotice} />}
           {view === "financeiro" && <Finance customers={customers} contracts={contracts} payments={payments} setPayments={setPayments} onNotice={setNotice} />}
           {view === "recolhimentos" && <Collections customers={customers} equipment={equipment} contracts={contracts} payments={payments} tasks={collectionTasks} setTasks={setCollectionTasks} onNotice={setNotice} />}
         </div>
@@ -496,7 +516,7 @@ function Quotes({ customers, equipment, quotes, onSave, onNotice, onConvert }: {
   </section>;
 }
 
-function Contracts({ customers, equipment, contracts, setContracts, onNotice }: { customers: Customer[]; equipment: Equipment[]; contracts: Contract[]; setContracts: (items: Contract[]) => void; onNotice: (message: string) => void }) {
+function Contracts({ customers, equipment, contracts, setContracts, payments, setPayments, onNotice }: { customers: Customer[]; equipment: Equipment[]; contracts: Contract[]; setContracts: (items: Contract[]) => void; payments: Payment[]; setPayments: (items: Payment[]) => void; onNotice: (message: string) => void }) {
   const [renewing, setRenewing] = useState<string | null>(null);
   const [days, setDays] = useState(1);
 
@@ -506,7 +526,20 @@ function Contracts({ customers, equipment, contracts, setContracts, onNotice }: 
       return selectedEquipment ? sum + priceFor(selectedEquipment, days) * item.quantity : sum;
     }, 0);
     const renewal: Renewal = { id: crypto.randomUUID(), mode: "Novo ciclo de locação", date: new Date().toISOString(), additionalDays: days, additionalValue, newDueDate: addDays(contract.dueDate, days), user: "Administrador" };
+    const renewalPayment: Payment = {
+      id: crypto.randomUUID(),
+      contractId: contract.id,
+      customerId: contract.customerId,
+      description: `Renovação de ${days} dia(s)`,
+      dueAmount: additionalValue,
+      receivedAmount: 0,
+      dueDate: renewal.newDueDate,
+      paymentDate: localDate(),
+      method: "PIX",
+      notes: "Gerado automaticamente pela renovação da locação.",
+    };
     setContracts(contracts.map((item) => item.id === contract.id ? { ...item, dueDate: renewal.newDueDate, total: item.total + additionalValue, status: "Renovado", renewals: [...item.renewals, renewal] } : item));
+    setPayments([renewalPayment, ...payments]);
     setRenewing(null);
     onNotice(`Renovação registrada. Valor adicional: ${money(additionalValue)}.`);
   }
@@ -516,22 +549,41 @@ function Contracts({ customers, equipment, contracts, setContracts, onNotice }: 
 
 function Finance({ customers, contracts, payments, setPayments, onNotice }: { customers: Customer[]; contracts: Contract[]; payments: Payment[]; setPayments: (items: Payment[]) => void; onNotice: (message: string) => void }) {
   const [showForm, setShowForm] = useState(false);
+  const [selectedContractId, setSelectedContractId] = useState("");
+  const [receivedAmount, setReceivedAmount] = useState(0);
+  const [paymentDate, setPaymentDate] = useState(localDate());
+  const selectedContract = contracts.find((contract) => contract.id === selectedContractId);
+  const selectedCharge = payments.find((payment) => payment.contractId === selectedContractId && payment.receivedAmount < payment.dueAmount);
   const received = payments.reduce((sum, item) => sum + item.receivedAmount, 0);
   const pending = payments.reduce((sum, item) => sum + Math.max(0, item.dueAmount - item.receivedAmount), 0);
 
   function savePayment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const contract = contracts.find((item) => item.id === String(data.get("contractId")));
+    const contract = contracts.find((item) => item.id === selectedContractId);
     if (!contract) { onNotice("Selecione uma locação válida."); return; }
-    const payment: Payment = { id: crypto.randomUUID(), contractId: contract.id, customerId: contract.customerId, description: String(data.get("description") ?? "Locação"), dueAmount: Number(data.get("dueAmount") ?? 0), receivedAmount: Number(data.get("receivedAmount") ?? 0), dueDate: String(data.get("dueDate") ?? ""), paymentDate: String(data.get("paymentDate") ?? ""), method: String(data.get("method") ?? "PIX") as Payment["method"], notes: String(data.get("notes") ?? "") };
-    setPayments([payment, ...payments]);
+    const updatedPayment: Payment = {
+      id: selectedCharge?.id ?? crypto.randomUUID(),
+      contractId: contract.id,
+      customerId: contract.customerId,
+      description: selectedCharge?.description ?? String(data.get("description") ?? "Locação"),
+      dueAmount: selectedCharge?.dueAmount ?? contract.total,
+      receivedAmount: selectedCharge ? Math.min(selectedCharge.dueAmount, receivedAmount) : receivedAmount,
+      dueDate: selectedCharge?.dueDate ?? contract.dueDate,
+      paymentDate,
+      method: String(data.get("method") ?? "PIX") as Payment["method"],
+      notes: String(data.get("notes") ?? ""),
+    };
+    setPayments(selectedCharge ? payments.map((item) => item.id === selectedCharge.id ? updatedPayment : item) : [updatedPayment, ...payments]);
     setShowForm(false);
     onNotice("Lançamento financeiro salvo.");
     event.currentTarget.reset();
+    setSelectedContractId("");
+    setReceivedAmount(0);
+    setPaymentDate(localDate());
   }
 
-  return <section><div className="section-heading"><div><p className="eyebrow">CONTROLE FINANCEIRO</p><h1>Financeiro</h1><p>Registre valores devidos, recebimentos e pagamentos parciais.</p></div><button className="primary-button" onClick={() => setShowForm(!showForm)}><span>+</span> Novo lançamento</button></div><div className="finance-metrics"><div className="finance-metric"><span>Total recebido</span><strong>{money(received)}</strong></div><div className="finance-metric"><span>Total pendente</span><strong>{money(pending)}</strong></div><div className="finance-metric"><span>Lançamentos</span><strong>{payments.length}</strong></div></div>{showForm && <form className="form-card" onSubmit={savePayment}><div className="form-heading"><h2>Novo lançamento</h2><button type="button" className="close-form" onClick={() => setShowForm(false)}>×</button></div><div className="form-grid"><label>Locação<select required name="contractId"><option value="">Selecione uma locação</option>{contracts.map((contract) => <option value={contract.id} key={contract.id}>{contract.number} - {customers.find((item) => item.id === contract.customerId)?.name}</option>)}</select></label><label>Descrição<input required name="description" defaultValue="Pagamento da locação" /></label><label>Valor devido<input required name="dueAmount" type="number" min="0" step="0.01" /></label><label>Valor recebido<input required name="receivedAmount" type="number" min="0" step="0.01" defaultValue="0" /></label><label>Vencimento<input required name="dueDate" type="date" /></label><label>Data do pagamento<input name="paymentDate" type="date" /></label><label>Forma de pagamento<select name="method"><option>PIX</option><option>Dinheiro</option><option>Transferência</option><option>Outros</option></select></label><label>Observações<input name="notes" /></label></div><div className="form-actions"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancelar</button><button className="primary-button">Salvar lançamento</button></div></form>}{payments.length === 0 ? <div className="panel"><div className="empty-state"><div className="empty-icon soft">R$</div><strong>Nenhum lançamento financeiro</strong><p>Registre o primeiro pagamento de uma locação.</p></div></div> : <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>CLIENTE</th><th>DESCRIÇÃO</th><th>DEVIDO</th><th>RECEBIDO</th><th>STATUS</th></tr></thead><tbody>{payments.map((payment) => { const customer = customers.find((item) => item.id === payment.customerId); const status = payment.receivedAmount >= payment.dueAmount ? "Pago" : payment.receivedAmount > 0 ? "Pago parcialmente" : new Date(payment.dueDate) < new Date() ? "Atrasado" : "Pendente"; return <tr key={payment.id}><td><strong>{customer?.name ?? "Cliente"}</strong></td><td>{payment.description}</td><td>{money(payment.dueAmount)}</td><td>{money(payment.receivedAmount)}</td><td><span className={`quote-status ${status === "Pago" ? "paid-status" : ""}`}>{status}</span></td></tr>; })}</tbody></table></div></div>}</section>;
+  return <section><div className="section-heading"><div><p className="eyebrow">CONTROLE FINANCEIRO</p><h1>Financeiro</h1><p>As cobranças são geradas na locação; aqui você registra recebimentos parciais.</p></div><button className="primary-button" onClick={() => setShowForm(!showForm)}><span>+</span> Registrar recebimento</button></div><div className="finance-metrics"><div className="finance-metric"><span>Total recebido</span><strong>{money(received)}</strong></div><div className="finance-metric"><span>Total pendente</span><strong>{money(pending)}</strong></div><div className="finance-metric"><span>Lançamentos</span><strong>{payments.length}</strong></div></div>{showForm && <form className="form-card" onSubmit={savePayment}><div className="form-heading"><div><h2>Registrar recebimento</h2><p className="form-description">O valor devido e o vencimento vêm automaticamente da cobrança da locação.</p></div><button type="button" className="close-form" onClick={() => setShowForm(false)}>×</button></div><div className="form-grid"><label>Locação<select required name="contractId" value={selectedContractId} onChange={(event) => { setSelectedContractId(event.target.value); setReceivedAmount(0); }}><option value="">Selecione uma locação</option>{contracts.map((contract) => <option value={contract.id} key={contract.id}>{contract.number} - {customers.find((item) => item.id === contract.customerId)?.name}</option>)}</select></label><label>Descrição<input required name="description" defaultValue="Pagamento da locação" /></label><label>Valor devido<input required name="dueAmount" type="number" value={selectedCharge?.dueAmount ?? selectedContract?.total ?? 0} readOnly /></label><label>Valor recebido<input required name="receivedAmount" type="number" min="0" max={selectedCharge?.dueAmount ?? selectedContract?.total ?? undefined} step="0.01" value={receivedAmount} onChange={(event) => setReceivedAmount(Number(event.target.value))} /><small className="field-help">Exemplo: informe R$ 50,00 se o cliente pagar metade de uma cobrança de R$ 100,00.</small></label><label>Vencimento<input required name="dueDate" type="date" value={selectedCharge?.dueDate ?? selectedContract?.dueDate ?? ""} readOnly /></label><label>Data do pagamento<input name="paymentDate" type="date" value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} /></label><label>Forma de pagamento<select name="method"><option>PIX</option><option>Dinheiro</option><option>Transferência</option><option>Outros</option></select></label><label>Observações<input name="notes" /></label></div><div className="form-actions"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancelar</button><button className="primary-button">Salvar recebimento</button></div></form>}{payments.length === 0 ? <div className="panel"><div className="empty-state"><div className="empty-icon soft">R$</div><strong>Nenhum lançamento financeiro</strong><p>As cobranças são criadas automaticamente ao converter um orçamento em locação.</p></div></div> : <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>CLIENTE</th><th>DESCRIÇÃO</th><th>DEVIDO</th><th>RECEBIDO</th><th>VENCIMENTO</th><th>STATUS</th></tr></thead><tbody>{payments.map((payment) => { const customer = customers.find((item) => item.id === payment.customerId); const status = payment.receivedAmount >= payment.dueAmount ? "Pago" : payment.receivedAmount > 0 ? "Pago parcialmente" : new Date(`${payment.dueDate}T23:59:59`) < new Date() ? "Atrasado" : "Pendente"; return <tr key={payment.id}><td><strong>{customer?.name ?? "Cliente"}</strong></td><td>{payment.description}</td><td>{money(payment.dueAmount)}</td><td>{money(payment.receivedAmount)}</td><td>{new Date(`${payment.dueDate}T12:00:00`).toLocaleDateString("pt-BR")}</td><td><span className={`quote-status ${status === "Pago" ? "paid-status" : ""}`}>{status}</span></td></tr>; })}</tbody></table></div></div>}</section>;
 }
 
 function Collections({ customers, equipment, contracts, payments, tasks, setTasks, onNotice }: { customers: Customer[]; equipment: Equipment[]; contracts: Contract[]; payments: Payment[]; tasks: CollectionTask[]; setTasks: (items: CollectionTask[]) => void; onNotice: (message: string) => void }) {

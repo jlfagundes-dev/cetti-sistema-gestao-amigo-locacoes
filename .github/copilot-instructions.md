@@ -19,6 +19,7 @@ Aplicação web mobile-first para gestão da Amigo Locações de equipamentos pa
 - Preserve histórico de clientes, locações, pagamentos e renovações; não sobrescreva contratos anteriores.
 - Renovações podem alterar o período original ou iniciar um novo ciclo, com diferença e histórico explícitos.
 - No fluxo operacional atual, cada renovação é um novo ciclo independente: calcule a faixa de preço somente para os dias renovados, some ao acumulado e preserve o que já foi cobrado.
+- Ao converter orçamento em locação, gere uma cobrança automática com o total do orçamento e vencimento igual à data de início mais o período; registre recebimentos parciais sem duplicar a cobrança.
 - Orçamentos assinados podem virar locações; pagamentos aceitam recebimentos parciais e nunca devem apagar histórico.
 - Use os status e condições comerciais definidos no escopo do projeto.
 
