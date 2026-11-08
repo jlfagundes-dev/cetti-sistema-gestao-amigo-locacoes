@@ -197,6 +197,19 @@ function readStorage<T>(key: string, fallback: T): T {
   }
 }
 
+function customerFromRemoteRow(row: { id: string; name: string; document: string; phone: string; email: string; customer_address: Address }, addresses: { address: Address }[]): Customer {
+  return {
+    id: row.id,
+    name: row.name,
+    document: row.document,
+    phone: row.phone,
+    email: row.email,
+    city: row.customer_address?.city ?? "",
+    address: row.customer_address,
+    workAddresses: addresses.map((item) => item.address),
+  };
+}
+
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -233,6 +246,29 @@ export default function Home() {
       listener.subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!supabase || !session) return;
+    const client = supabase;
+    let active = true;
+    async function loadRemoteCustomers() {
+      const { data, error } = await client
+        .from("customers")
+        .select("id,name,document,phone,email,customer_address,customer_addresses(address)")
+        .order("created_at", { ascending: false });
+      if (!active) return;
+      if (error) {
+        setNotice(`Supabase indisponível para clientes. Continuando no modo local: ${error.message}`);
+        return;
+      }
+      const remoteCustomers = (data ?? []).map((row) => customerFromRemoteRow(row, row.customer_addresses ?? []));
+      setCustomers(remoteCustomers);
+    }
+    void loadRemoteCustomers();
+    return () => {
+      active = false;
+    };
+  }, [session]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -275,8 +311,9 @@ export default function Home() {
     setNotice("");
   }
 
-  function saveCustomer(event: FormEvent<HTMLFormElement>) {
+  async function saveCustomer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     const data = new FormData(event.currentTarget);
     const customer: Customer = {
       id: crypto.randomUUID(),
@@ -304,10 +341,40 @@ export default function Home() {
         locationUrl: String(data.get(`workLocation-${index}`) ?? ""),
       })),
     };
-    setCustomers((current) => [...current, customer]);
+    if (supabase && session) {
+      const { data: savedCustomer, error } = await supabase
+        .from("customers")
+        .insert({
+          name: customer.name,
+          document: customer.document,
+          phone: customer.phone,
+          email: customer.email,
+          customer_address: customer.address,
+        })
+        .select("id,name,document,phone,email,customer_address")
+        .single();
+      if (error || !savedCustomer) {
+        setCustomers((current) => [...current, customer]);
+        setNotice(`Não foi possível salvar no Supabase. Cliente mantido localmente: ${error?.message ?? "resposta vazia"}`);
+        setShowCustomerForm(false);
+        form.reset();
+        return;
+      }
+      const { error: addressError } = await supabase.from("customer_addresses").insert(
+        (customer.workAddresses ?? []).map((address) => ({ customer_id: savedCustomer.id, label: "Obra", address })),
+      );
+      if (addressError) {
+        await supabase.from("customers").delete().eq("id", savedCustomer.id);
+        setNotice(`Não foi possível salvar os endereços da obra: ${addressError.message}`);
+        return;
+      }
+      setCustomers((current) => [customerFromRemoteRow(savedCustomer, (customer.workAddresses ?? []).map((address) => ({ address }))), ...current]);
+    } else {
+      setCustomers((current) => [...current, customer]);
+    }
     setShowCustomerForm(false);
     setNotice("Cliente cadastrado com sucesso.");
-    event.currentTarget.reset();
+    form.reset();
   }
 
   function saveQuote(quote: Quote) {

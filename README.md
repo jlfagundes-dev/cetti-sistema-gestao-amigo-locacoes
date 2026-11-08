@@ -4,10 +4,10 @@ Sistema mobile-first para gestão de locações de equipamentos da Amigo Locaç�
 
 ## Status
 
-A aplicação contém as bases das **Fases 1, 2 e 3 do MVP**:
+A aplicação contém as bases das **Fases 1, 2, 3 e 4 do MVP**, com a autenticação e o cadastro de clientes já integrados ao Supabase:
 
 - Dashboard operacional com indicadores e estados vazios.
-- Cadastro local de clientes com endereço completo do cliente, múltiplos endereços de obra e link de localização copiado do WhatsApp para abrir no Maps (persistência temporária no navegador).
+- Cadastro de clientes com endereço completo, múltiplos endereços de obra e link de localização copiado do WhatsApp para abrir no Maps. Com Supabase configurado, clientes e endereços de obra são persistidos no banco; sem conexão, o cadastro usa o armazenamento local como fallback.
 - Catálogo inicial de equipamentos e regras de preço configuráveis.
 - Criação de orçamentos com múltiplos equipamentos, cálculo automático, desconto, status e impressão para PDF.
 - Conversão de orçamentos em locações, renovações com histórico e controle financeiro local.
@@ -17,13 +17,13 @@ A aplicação contém as bases das **Fases 1, 2 e 3 do MVP**:
 - Navegação responsiva para desktop e celular.
 - Diretrizes do projeto em [`.github/copilot-instructions.md`](./.github/copilot-instructions.md).
 
-O modo local é identificado na interface e será mantido durante todas as fases do MVP. A integração com Supabase Auth, PostgreSQL, Storage e RLS será feita somente depois da conclusão dos módulos.
+Os módulos que ainda não foram migrados continuam usando `localStorage`. A migração para o Supabase será feita gradualmente para preservar o funcionamento do sistema durante a transição.
 
 ## Supabase
 
 O cliente oficial e a primeira migration já estão preparados em [`supabase/migrations`](./supabase/migrations). O arquivo `.env.local` contém somente a URL e a chave pública do projeto e permanece ignorado pelo Git.
 
-As tabelas da migration usam RLS e liberam acesso apenas para usuários autenticados. A aplicação ainda continua usando o modo local até a autenticação e a migração de cada módulo serem implementadas.
+As tabelas da migration usam RLS e liberam acesso apenas para usuários autenticados. A aplicação exige login quando o Supabase está configurado; clientes e seus endereços já são carregados e salvos nas tabelas `customers` e `customer_addresses`.
 
 Depois de aplicar a migration no projeto Supabase, crie o primeiro usuário em **Authentication > Users**. Não publique a senha do banco nem qualquer chave `service_role`/`secret`.
 
